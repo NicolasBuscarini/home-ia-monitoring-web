@@ -1,11 +1,11 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { I18nProvider } from 'home-ia-shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BIOMETRIC_CONSENT_VERSION,
   BiometricEnrollmentPanel,
 } from '../src/features/biometrics/BiometricEnrollmentPanel';
-import { I18nProvider } from '../src/i18n/i18n';
 
 function response(body: unknown, status = 200) {
   return new Response(status === 204 ? null : JSON.stringify(body), {

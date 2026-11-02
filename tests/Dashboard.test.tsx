@@ -1,8 +1,8 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { I18nProvider } from 'home-ia-shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Dashboard } from '../src/features/monitoring/Dashboard';
-import { I18nProvider } from '../src/i18n/i18n';
 
 afterEach(() => cleanup());
 

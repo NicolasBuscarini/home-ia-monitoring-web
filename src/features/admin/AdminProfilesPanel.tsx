@@ -1,6 +1,5 @@
+import { ApiError, getJson, request, useI18n } from 'home-ia-shared';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useI18n } from '../../i18n/i18n';
-import { ApiError, getJson, request } from '../../services/http';
 import { PERMISSION_GROUPS, permissionDescription, permissionName } from './permissionCatalog';
 
 interface Profile {

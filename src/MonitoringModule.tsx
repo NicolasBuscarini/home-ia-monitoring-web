@@ -1,7 +1,5 @@
-import type { CameraStatus, UserRole } from './domain/platform';
+import type { CameraStatus, UserRole } from 'home-ia-shared';
 import { Dashboard } from './features/monitoring/Dashboard';
-import { I18nProvider } from './i18n/i18n';
-import type { Locale } from './i18n/messages';
 
 export interface MonitoringModuleProps {
   locale: string;
@@ -13,7 +11,6 @@ export interface MonitoringModuleProps {
 }
 
 export default function MonitoringModule({
-  locale,
   cameras,
   selectedCameraId,
   onCameraSelect,
@@ -21,14 +18,12 @@ export default function MonitoringModule({
   portalModuleIds,
 }: MonitoringModuleProps) {
   return (
-    <I18nProvider key={locale} initialLocale={locale as Locale}>
-      <Dashboard
-        cameras={cameras}
-        selectedCameraId={selectedCameraId}
-        onCameraSelect={onCameraSelect}
-        userRole={userRole}
-        portalModuleIds={portalModuleIds}
-      />
-    </I18nProvider>
+    <Dashboard
+      cameras={cameras}
+      selectedCameraId={selectedCameraId}
+      onCameraSelect={onCameraSelect}
+      userRole={userRole}
+      portalModuleIds={portalModuleIds}
+    />
   );
 }

@@ -1,9 +1,8 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { I18nProvider } from 'home-ia-shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AdminAccessRequestsPanel } from '../src/features/admin/AdminAccessRequestsPanel';
-import { UserLanding } from '../src/features/auth/UserLanding';
-import { I18nProvider } from '../src/i18n/i18n';
 
 function response(body: unknown, status = 200) {
   return new Response(status === 204 ? null : JSON.stringify(body), {
@@ -18,41 +17,6 @@ afterEach(() => {
 });
 
 describe('access request screens', () => {
-  it('lets a base User submit an idempotent request and clearly confirms it grants no access', async () => {
-    const calls: Array<{ path: string; method: string; body?: string }> = [];
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const path = String(input);
-      const method = init?.method ?? 'GET';
-      calls.push({ path, method, body: init?.body ? String(init.body) : undefined });
-      if (path === '/api/v1/access-requests/mine') return response({ request: null });
-      if (path === '/api/v1/access-requests' && method === 'POST') {
-        return response(
-          {
-            publicId: 'ARQ000000000001',
-            purpose: 'live_monitoring',
-            status: 'pending',
-            createdAtUtc: '2026-10-30T00:00:00Z',
-          },
-          202,
-        );
-      }
-      throw new Error(`Unexpected request: ${method} ${path}`);
-    });
-    const user = userEvent.setup();
-    render(
-      <I18nProvider>
-        <UserLanding canRequestAccess />
-      </I18nProvider>,
-    );
-    await user.click(await screen.findByRole('button', { name: 'Enviar pedido de acesso' }));
-    expect(await screen.findByText(/aguarda análise do administrador/i)).toBeInTheDocument();
-    expect(screen.getByText(/não concede acesso automaticamente/i)).toBeInTheDocument();
-    const submitted = calls.find((call) => call.method === 'POST');
-    expect(submitted?.path).toBe('/api/v1/access-requests');
-    expect(JSON.parse(submitted?.body ?? '{}')).toMatchObject({ purpose: 'live_monitoring' });
-    expect(JSON.parse(submitted?.body ?? '{}').idempotencyKey).toMatch(/^[0-9a-f-]{36}$/i);
-  });
-
   it('shows request state, marks review without reloading, and opens the exact user in management', async () => {
     let status = 'pending';
     const calls: string[] = [];

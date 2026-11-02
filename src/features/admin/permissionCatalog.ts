@@ -1,4 +1,4 @@
-import type { TranslationKey } from '../../i18n/messages';
+import type { TranslationKey } from 'home-ia-shared';
 
 interface PermissionCopy {
   name: TranslationKey;

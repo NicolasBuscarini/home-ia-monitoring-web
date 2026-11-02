@@ -1,6 +1,5 @@
+import { ApiError, getJson, request, useI18n } from 'home-ia-shared';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
-import { useI18n } from '../../i18n/i18n';
-import { ApiError, getJson, request } from '../../services/http';
 import { BiometricEnrollmentPanel } from '../biometrics/BiometricEnrollmentPanel';
 
 interface KnownPerson {

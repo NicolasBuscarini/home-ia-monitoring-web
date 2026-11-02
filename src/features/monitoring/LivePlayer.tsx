@@ -1,9 +1,7 @@
 import type Hls from 'hls.js';
+import type { CameraStatus, TranslationKey, TranslationValues } from 'home-ia-shared';
+import { StatusBadge, useI18n } from 'home-ia-shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { StatusBadge } from '../../components/StatusBadge';
-import type { CameraStatus } from '../../domain/platform';
-import { useI18n } from '../../i18n/i18n';
-import type { TranslationKey, TranslationValues } from '../../i18n/messages';
 import { PLAYER_BUFFER_LIMITS, selectPlaybackMode } from './playback';
 
 interface LivePlayerProps {

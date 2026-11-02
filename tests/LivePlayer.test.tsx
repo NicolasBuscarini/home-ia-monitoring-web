@@ -1,10 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { I18nProvider, useI18n } from 'home-ia-shared';
 import { Profiler, StrictMode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LivePlayer } from '../src/features/monitoring/LivePlayer';
 import { PLAYER_BUFFER_LIMITS, selectPlaybackMode } from '../src/features/monitoring/playback';
-import { I18nProvider, useI18n } from '../src/i18n/i18n';
 
 afterEach(() => cleanup());
 

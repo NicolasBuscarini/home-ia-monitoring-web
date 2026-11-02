@@ -1,6 +1,6 @@
+import type { TranslationKey } from 'home-ia-shared';
+import { useI18n } from 'home-ia-shared';
 import { useEffect, useRef, useState } from 'react';
-import { useI18n } from '../i18n/i18n';
-import type { TranslationKey } from '../i18n/messages';
 
 export type DashboardView =
   | 'monitor'
@@ -84,7 +84,6 @@ export function DashboardMenu({ active, isAdmin, portalModuleIds, onChange }: Da
             className="view-tab"
             type="button"
             id="tab-clips"
-            aria-controls="view-clips"
             aria-current={active === 'clips' ? 'page' : undefined}
             onClick={() => choose('clips')}
           >

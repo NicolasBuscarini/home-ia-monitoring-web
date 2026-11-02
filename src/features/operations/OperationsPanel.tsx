@@ -1,9 +1,12 @@
+import type {
+  CameraStatus,
+  ReadinessResponse,
+  SystemProfile,
+  TranslationKey,
+  TranslationValues,
+} from 'home-ia-shared';
+import { getJson, request, StatusBadge, useI18n } from 'home-ia-shared';
 import { useEffect, useRef, useState } from 'react';
-import { StatusBadge } from '../../components/StatusBadge';
-import type { CameraStatus, ReadinessResponse, SystemProfile } from '../../domain/platform';
-import { useI18n } from '../../i18n/i18n';
-import type { TranslationKey, TranslationValues } from '../../i18n/messages';
-import { getJson, request } from '../../services/http';
 
 interface OperationsPanelProps {
   camera: CameraStatus;

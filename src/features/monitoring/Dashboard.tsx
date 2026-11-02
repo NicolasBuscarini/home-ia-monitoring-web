@@ -1,9 +1,7 @@
+import type { CameraStatus, TranslationKey, UserRole } from 'home-ia-shared';
+import { StatusBadge, useI18n } from 'home-ia-shared';
 import { useEffect, useRef, useState } from 'react';
 import { DashboardMenu, type DashboardView } from '../../components/DashboardMenu';
-import { StatusBadge } from '../../components/StatusBadge';
-import type { CameraStatus, UserRole } from '../../domain/platform';
-import { useI18n } from '../../i18n/i18n';
-import type { TranslationKey } from '../../i18n/messages';
 import { AdminAccessRequestsPanel } from '../admin/AdminAccessRequestsPanel';
 import { AdminCameraConnectionPanel } from '../admin/AdminCameraConnectionPanel';
 import { AdminPeoplePanel } from '../admin/AdminPeoplePanel';

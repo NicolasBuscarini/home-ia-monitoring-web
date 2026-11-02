@@ -1,8 +1,6 @@
+import type { TranslationKey } from 'home-ia-shared';
+import { ApiError, getJson, request, StatusBadge, useI18n } from 'home-ia-shared';
 import { type ChangeEvent, type FormEvent, useCallback, useEffect, useId, useState } from 'react';
-import { StatusBadge } from '../../components/StatusBadge';
-import { useI18n } from '../../i18n/i18n';
-import type { TranslationKey } from '../../i18n/messages';
-import { ApiError, getJson, request } from '../../services/http';
 
 /** Consent text version accepted by the account; the API rejects enrollment without the current value. */
 export const BIOMETRIC_CONSENT_VERSION = 'biometric-consent.v1';

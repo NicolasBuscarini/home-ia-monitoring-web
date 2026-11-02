@@ -1,8 +1,8 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { I18nProvider } from 'home-ia-shared';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ClipsPanel } from '../src/features/clips/ClipsPanel';
-import { I18nProvider } from '../src/i18n/i18n';
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });

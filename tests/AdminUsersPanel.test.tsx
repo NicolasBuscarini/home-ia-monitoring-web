@@ -1,8 +1,8 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { I18nProvider } from 'home-ia-shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AdminUsersPanel } from '../src/features/admin/AdminUsersPanel';
-import { I18nProvider } from '../src/i18n/i18n';
 
 const account = { publicId: 'USR000000000001', userName: 'local-user', isActive: true };
 const profile = {

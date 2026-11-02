@@ -1,7 +1,6 @@
+import type { TranslationKey } from 'home-ia-shared';
+import { ApiError, getJson, request, useI18n } from 'home-ia-shared';
 import { useCallback, useEffect, useState } from 'react';
-import { useI18n } from '../../i18n/i18n';
-import type { TranslationKey } from '../../i18n/messages';
-import { ApiError, getJson, request } from '../../services/http';
 
 interface AccessRequestSummary {
   publicId: string;
