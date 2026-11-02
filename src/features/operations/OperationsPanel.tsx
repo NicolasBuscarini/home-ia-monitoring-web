@@ -7,6 +7,7 @@ import type {
 } from 'home-ia-shared';
 import { getJson, request, StatusBadge, useI18n } from 'home-ia-shared';
 import { useEffect, useRef, useState } from 'react';
+import { CaptureSettingsPanel } from './CaptureSettingsPanel';
 
 interface OperationsPanelProps {
   camera: CameraStatus;
@@ -341,6 +342,7 @@ export function OperationsPanel({ camera, view, playerStatus }: OperationsPanelP
             </div>
           </section>
           <p className="operational-note mt-4 mb-0">{t('operations.capture.note')}</p>
+          <CaptureSettingsPanel />
         </>
       )}
       <span className="visually-hidden" aria-live="polite">
