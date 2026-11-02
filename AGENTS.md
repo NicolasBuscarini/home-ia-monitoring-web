@@ -13,6 +13,7 @@
 - Não adicionar CDN, backend paralelo ou autorização no cliente. Não expor chaves, RTSP, NAS ou dados pessoais no bundle.
 - Componentes devem manter acessibilidade, teclado/foco, responsividade e estados de loading/vazio/erro.
 - O CSS global pertence ao shell nesta fase; o remote usa as mesmas classes e não deve depender de estilos próprios não documentados.
+- O player HLS deve manter os limites existentes de buffer curtos e finitos (`maxBufferLength: 12`, `maxMaxBufferLength: 18`, `backBufferLength: 6`, `maxBufferSize: 48_000_000` bytes de mídia comprimida), destruir instâncias/handlers ao trocar epoch ou desmontar, e não agendar render React se posição/duração/estado live visíveis não mudarem. Isso limita o buffer de mídia gerenciado pelo HLS.js, não a memória total de vídeo/decoder do browser. Para câmera capturando, tentar autoplay no live edge sem áudio; autoplay é best-effort e requer fallback acessível se bloqueado. Áudio exige ação explícita.
 - Testes com Vitest/Testing Library cobrem o contrato do módulo e o estado vazio; o ensaio federado em browser é separado.
 - Fixar Node/dependências e rodar verificações por Compose a partir da raiz (`./garage`).
 
