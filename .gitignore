@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.mf/
+coverage/
+test-results/
+playwright-report/
+.vite/
+.env
+.env.*
+!.env.example
+npm-debug.log*
