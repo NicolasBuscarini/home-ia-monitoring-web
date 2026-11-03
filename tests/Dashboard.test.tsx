@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { I18nProvider } from 'home-ia-shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -34,17 +34,14 @@ function renderDashboard(
 describe('dashboard navigation', () => {
   it('exposes only monitoring to Viewer', () => {
     renderDashboard('Viewer');
-    const menu = screen.getByRole('navigation', { name: 'Navegação principal' });
-    expect(within(menu).getAllByRole('button')).toHaveLength(2);
-    expect(within(menu).getByRole('button', { name: 'Monitoramento' })).toHaveAttribute(
-      'aria-current',
-      'page',
-    );
+    const menu = screen.getByRole('tablist', { name: 'Seções de monitoramento' });
+    expect(within(menu).getAllByRole('tab')).toHaveLength(2);
+    expect(within(menu).getByRole('tab', { name: 'Monitoramento' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('region', { name: 'Monitoramento' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reproduzir vídeo' })).toBeDisabled();
   });
 
-  it('groups system views under Sistema and management screens under Gestão', async () => {
+  it('exposes system and management screens as tabs for administrators', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const path = String(input);
       if (path === '/api/v1/admin/access-rules') return new Response('[]', { status: 200 });
@@ -62,25 +59,16 @@ describe('dashboard navigation', () => {
       throw new Error(`Unexpected request: ${path}`);
     });
     renderDashboard('Administrator');
-    const menu = screen.getByRole('navigation', { name: 'Navegação principal' });
-    expect(within(menu).getAllByRole('button')).toHaveLength(4);
-    const system = within(menu).getByRole('button', { name: 'Sistema' });
-    await userEvent.setup().click(system);
-    expect(system).toHaveAttribute('aria-expanded', 'true');
-    fireEvent.keyDown(document, { key: 'Escape' });
-    expect(system).toHaveAttribute('aria-expanded', 'false');
-    expect(system).toHaveFocus();
-    await userEvent.setup().click(system);
-    const healthMenuItem = within(menu).getByRole('button', { name: 'Saúde do sistema' });
-    await userEvent.setup().click(healthMenuItem);
-    expect(screen.getByRole('region', { name: 'Saúde do sistema' })).toBeInTheDocument();
+    const menu = screen.getByRole('tablist', { name: 'Seções de monitoramento' });
+    expect(within(menu).getAllByRole('tab')).toHaveLength(7);
+    expect(within(menu).queryByRole('tab', { name: 'Usuários' })).not.toBeInTheDocument();
 
-    const management = within(menu).getByRole('button', { name: 'Gestão' });
-    await userEvent.setup().click(management);
-    expect(within(menu).getByRole('button', { name: 'Pessoas' })).toBeInTheDocument();
-    expect(within(menu).getByRole('button', { name: 'Câmeras' })).toBeInTheDocument();
-    expect(within(menu).queryByRole('button', { name: 'Usuários' })).not.toBeInTheDocument();
-    await userEvent.setup().click(within(menu).getByRole('button', { name: 'Câmeras' }));
+    await userEvent.setup().click(within(menu).getByRole('tab', { name: 'Saúde do sistema' }));
+    expect(screen.getByRole('region', { name: 'Saúde do sistema' })).toBeInTheDocument();
+    expect(within(menu).getByRole('tab', { name: 'Pessoas' })).toBeInTheDocument();
+    expect(within(menu).getByRole('tab', { name: 'Câmeras' })).toBeInTheDocument();
+
+    await userEvent.setup().click(within(menu).getByRole('tab', { name: 'Câmeras' }));
     expect(await screen.findByRole('heading', { name: 'Configuração da câmera' })).toBeInTheDocument();
   });
 
@@ -181,9 +169,8 @@ describe('dashboard navigation', () => {
     });
 
     renderDashboard('Administrator', [activeCamera], activeCamera.cameraId);
-    const menu = screen.getByRole('navigation', { name: 'Navegação principal' });
-    await userEvent.setup().click(within(menu).getByRole('button', { name: 'Gestão' }));
-    await userEvent.setup().click(within(menu).getByRole('button', { name: 'Câmeras' }));
+    const menu = screen.getByRole('tablist', { name: 'Seções de monitoramento' });
+    await userEvent.setup().click(within(menu).getByRole('tab', { name: 'Câmeras' }));
     expect(await screen.findByRole('heading', { name: 'Configuração da câmera' })).toBeInTheDocument();
     expect(screen.getByLabelText('Endereço IPv4 ou hostname local da câmera')).toHaveValue('192.168.0.120');
 
@@ -248,7 +235,7 @@ describe('dashboard navigation', () => {
       throw new Error(`Unexpected request: ${path}`);
     });
     renderDashboard('Viewer');
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Clipes' }));
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'Clipes' }));
     expect(await screen.findByText('Linha do tempo de clipes')).toBeInTheDocument();
     expect(await screen.findByText('garage-01 · 20 B')).toBeInTheDocument();
     expect(screen.getAllByText('Pronto').some((element) => element.classList.contains('badge'))).toBe(true);

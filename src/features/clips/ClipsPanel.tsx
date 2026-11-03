@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 
 interface ClipItem {
   publicId: string;
@@ -1225,118 +1226,129 @@ export function ClipsPanel({ cameraId, isAdmin = false }: { cameraId?: string; i
         </div>
       )}
 
-      {selected && (
-        <div className="clip-dialog-backdrop">
-          <div
-            className="clip-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="clip-detail-title"
-            onKeyDown={handleDialogKeyDown}
-          >
-            <div className="clip-dialog-header">
-              <div>
-                <span className="eyebrow">{t('clips.detailEyebrow')}</span>
-                <h3 id="clip-detail-title" className="h5 mt-1">
-                  {t('clips.detailTitle')}
-                </h3>
-                <p className="small text-secondary mb-0">
-                  {formatDate(selected.clip.startedAtUtc)} – {formatDate(selected.clip.endedAtUtc)}
-                </p>
+      {selected &&
+        createPortal(
+          <div className="clip-dialog-backdrop">
+            <button
+              className="clip-dialog-scrim"
+              type="button"
+              tabIndex={-1}
+              aria-hidden="true"
+              onClick={closeDetail}
+            />
+            <div
+              className="clip-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="clip-detail-title"
+              onKeyDown={handleDialogKeyDown}
+            >
+              <div className="clip-dialog-header">
+                <div>
+                  <span className="eyebrow">{t('clips.detailEyebrow')}</span>
+                  <h3 id="clip-detail-title" className="h5 mt-1">
+                    {t('clips.detailTitle')}
+                  </h3>
+                  <p className="small text-secondary mb-0">
+                    {formatDate(selected.clip.startedAtUtc)} – {formatDate(selected.clip.endedAtUtc)}
+                  </p>
+                </div>
+                <button
+                  ref={closeButtonRef}
+                  className="btn-close"
+                  type="button"
+                  aria-label={t('clips.close')}
+                  onClick={closeDetail}
+                />
               </div>
-              <button
-                ref={closeButtonRef}
-                className="btn-close"
-                type="button"
-                aria-label={t('clips.close')}
-                onClick={closeDetail}
-              />
-            </div>
-            <div className="clip-dialog-body">
-              {selected.mediaUrl ? (
-                <>
-                  <p className="small text-secondary">{t('clips.captionsUnavailable')}</p>
-                  {/* biome-ignore lint/a11y/useMediaCaption: The clip contract has no caption track; explicitly disclose this limitation. */}
-                  <video
-                    key={`${selected.clip.publicId}-${playbackAttempt}`}
-                    className="clip-video"
-                    controls
-                    preload="metadata"
-                    src={selected.mediaUrl}
-                    onError={() => setPlaybackError(true)}
-                    onLoadedMetadata={() => setPlaybackError(false)}
-                  >
-                    {t('clips.videoFallback')}
-                  </video>
-                  {playbackError && (
-                    <div className="error-text mt-2" role="alert">
-                      <p>{t('clips.playback.error')}</p>
+              <div className="clip-dialog-body">
+                {selected.mediaUrl ? (
+                  <>
+                    <p className="small text-secondary">{t('clips.captionsUnavailable')}</p>
+                    {/* biome-ignore lint/a11y/useMediaCaption: The clip contract has no caption track; explicitly disclose this limitation. */}
+                    <video
+                      key={`${selected.clip.publicId}-${playbackAttempt}`}
+                      className="clip-video"
+                      controls
+                      preload="metadata"
+                      src={selected.mediaUrl}
+                      onError={() => setPlaybackError(true)}
+                      onLoadedMetadata={() => setPlaybackError(false)}
+                    >
+                      {t('clips.videoFallback')}
+                    </video>
+                    {playbackError && (
+                      <div className="error-text mt-2" role="alert">
+                        <p>{t('clips.playback.error')}</p>
+                        <button
+                          className="btn btn-outline-secondary btn-sm"
+                          type="button"
+                          onClick={() => {
+                            setPlaybackError(false);
+                            setPlaybackAttempt((current) => current + 1);
+                          }}
+                        >
+                          {t('clips.playback.retry')}
+                        </button>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p role="status">{t('clips.mediaUnavailable')}</p>
+                )}
+                <dl className="clip-metadata">
+                  <dt>{t('clips.camera')}</dt>
+                  <dd>{selected.clip.cameraId}</dd>
+                  <dt>{t('clips.mediaState')}</dt>
+                  <dd>{t(stateKeys[selected.clip.state] ?? 'clips.unknown')}</dd>
+                  <dt>{t('clips.archiveState')}</dt>
+                  <dd>{t(archiveKeys[selected.clip.archiveStatus] ?? 'clips.unknown')}</dd>
+                  <dt>{t('clips.analysis')}</dt>
+                  <dd>{t(analysisKeys[selected.clip.analysisStatus] ?? 'clips.unknown')}</dd>
+                  <dt>{t('clips.duration')}</dt>
+                  <dd>{formatDuration(selected.clip.startedAtUtc, selected.clip.endedAtUtc)}</dd>
+                  <dt>{t('clips.size')}</dt>
+                  <dd>{formatSize(selected.clip.sizeBytes)}</dd>
+                  <dt>{t('clips.trigger')}</dt>
+                  <dd>{selected.clip.triggerReason ?? t('clips.unknown')}</dd>
+                  <dt>{t('clips.updated')}</dt>
+                  <dd>{formatDate(selected.updatedAtUtc)}</dd>
+                </dl>
+                <div className="clip-dialog-actions">
+                  {renderAnalysisAction(selected.clip)}
+                  {isAdmin &&
+                    selected.clip.state === 'ready' &&
+                    selected.clip.archiveStatus === 'archived' && (
                       <button
-                        className="btn btn-outline-secondary btn-sm"
+                        className="btn btn-outline-secondary"
                         type="button"
-                        onClick={() => {
-                          setPlaybackError(false);
-                          setPlaybackAttempt((current) => current + 1);
-                        }}
+                        disabled={preservationBusyClip !== undefined}
+                        onClick={() => void togglePreservation(selected.clip)}
                       >
-                        {t('clips.playback.retry')}
+                        {preservationBusyClip === selected.clip.publicId
+                          ? t('clips.preservation.saving')
+                          : t(
+                              selected.clip.isPreserved
+                                ? 'clips.preservation.release'
+                                : 'clips.preservation.preserve',
+                            )}
                       </button>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <p role="status">{t('clips.mediaUnavailable')}</p>
-              )}
-              <dl className="clip-metadata">
-                <dt>{t('clips.camera')}</dt>
-                <dd>{selected.clip.cameraId}</dd>
-                <dt>{t('clips.mediaState')}</dt>
-                <dd>{t(stateKeys[selected.clip.state] ?? 'clips.unknown')}</dd>
-                <dt>{t('clips.archiveState')}</dt>
-                <dd>{t(archiveKeys[selected.clip.archiveStatus] ?? 'clips.unknown')}</dd>
-                <dt>{t('clips.analysis')}</dt>
-                <dd>{t(analysisKeys[selected.clip.analysisStatus] ?? 'clips.unknown')}</dd>
-                <dt>{t('clips.duration')}</dt>
-                <dd>{formatDuration(selected.clip.startedAtUtc, selected.clip.endedAtUtc)}</dd>
-                <dt>{t('clips.size')}</dt>
-                <dd>{formatSize(selected.clip.sizeBytes)}</dd>
-                <dt>{t('clips.trigger')}</dt>
-                <dd>{selected.clip.triggerReason ?? t('clips.unknown')}</dd>
-                <dt>{t('clips.updated')}</dt>
-                <dd>{formatDate(selected.updatedAtUtc)}</dd>
-              </dl>
-              <div className="clip-dialog-actions">
-                {renderAnalysisAction(selected.clip)}
-                {isAdmin && selected.clip.state === 'ready' && selected.clip.archiveStatus === 'archived' && (
-                  <button
-                    className="btn btn-outline-secondary"
-                    type="button"
-                    disabled={preservationBusyClip !== undefined}
-                    onClick={() => void togglePreservation(selected.clip)}
+                    )}
+                </div>
+                {preservationNotice?.clipId === selected.clip.publicId && (
+                  <p
+                    role={preservationNotice.error ? 'alert' : 'status'}
+                    aria-live="polite"
+                    className={preservationNotice.error ? 'error-text' : undefined}
                   >
-                    {preservationBusyClip === selected.clip.publicId
-                      ? t('clips.preservation.saving')
-                      : t(
-                          selected.clip.isPreserved
-                            ? 'clips.preservation.release'
-                            : 'clips.preservation.preserve',
-                        )}
-                  </button>
+                    {preservationNotice.text}
+                  </p>
                 )}
               </div>
-              {preservationNotice?.clipId === selected.clip.publicId && (
-                <p
-                  role={preservationNotice.error ? 'alert' : 'status'}
-                  aria-live="polite"
-                  className={preservationNotice.error ? 'error-text' : undefined}
-                >
-                  {preservationNotice.text}
-                </p>
-              )}
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </section>
   );
 }

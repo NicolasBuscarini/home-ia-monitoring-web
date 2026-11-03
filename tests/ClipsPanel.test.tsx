@@ -347,7 +347,7 @@ it('reports an unplayable clip and offers a retry instead of failing silently', 
     throw new Error(`Unexpected request: ${path}`);
   });
   const user = userEvent.setup();
-  const { container } = render(
+  render(
     <I18nProvider>
       <ClipsPanel />
     </I18nProvider>,
@@ -359,8 +359,8 @@ it('reports an unplayable clip and offers a retry instead of failing silently', 
 
   fireEvent.error(video);
   expect(await screen.findByText(/Não foi possível reproduzir o clipe/)).toBeInTheDocument();
-  const before = container.querySelector('video');
+  const before = document.querySelector('video');
   await user.click(screen.getByRole('button', { name: 'Tentar novamente' }));
   expect(screen.queryByText(/Não foi possível reproduzir o clipe/)).not.toBeInTheDocument();
-  expect(container.querySelector('video')).not.toBe(before);
+  expect(document.querySelector('video')).not.toBe(before);
 });
