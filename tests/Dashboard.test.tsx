@@ -18,6 +18,7 @@ function renderDashboard(
   cameras = [camera],
   selectedCameraId = cameras[0]?.cameraId,
   onCameraSelect = () => {},
+  activeView?: string,
 ) {
   return render(
     <I18nProvider>
@@ -26,22 +27,21 @@ function renderDashboard(
         selectedCameraId={selectedCameraId}
         onCameraSelect={onCameraSelect}
         userRole={userRole}
+        activeView={activeView}
       />
     </I18nProvider>,
   );
 }
 
 describe('dashboard navigation', () => {
-  it('exposes only monitoring to Viewer', () => {
+  it('renders the monitoring view without any in-page tab list', () => {
     renderDashboard('Viewer');
-    const menu = screen.getByRole('tablist', { name: 'Seções de monitoramento' });
-    expect(within(menu).getAllByRole('tab')).toHaveLength(2);
-    expect(within(menu).getByRole('tab', { name: 'Monitoramento' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Monitoramento' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reproduzir vídeo' })).toBeDisabled();
   });
 
-  it('exposes system and management screens as tabs for administrators', async () => {
+  it('renders the administrative screen selected by the sidebar', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const path = String(input);
       if (path === '/api/v1/admin/access-rules') return new Response('[]', { status: 200 });
@@ -58,18 +58,41 @@ describe('dashboard navigation', () => {
         });
       throw new Error(`Unexpected request: ${path}`);
     });
-    renderDashboard('Administrator');
-    const menu = screen.getByRole('tablist', { name: 'Seções de monitoramento' });
-    expect(within(menu).getAllByRole('tab')).toHaveLength(7);
-    expect(within(menu).queryByRole('tab', { name: 'Usuários' })).not.toBeInTheDocument();
-
-    await userEvent.setup().click(within(menu).getByRole('tab', { name: 'Saúde do sistema' }));
+    renderDashboard('Administrator', [camera], camera.cameraId, () => {}, 'health');
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Saúde do sistema' })).toBeInTheDocument();
-    expect(within(menu).getByRole('tab', { name: 'Pessoas' })).toBeInTheDocument();
-    expect(within(menu).getByRole('tab', { name: 'Câmeras' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Monitoramento' })).not.toBeInTheDocument();
+  });
 
-    await userEvent.setup().click(within(menu).getByRole('tab', { name: 'Câmeras' }));
-    expect(await screen.findByRole('heading', { name: 'Configuração da câmera' })).toBeInTheDocument();
+  it('falls back to the monitoring view when a Viewer requests an administrative submodule', () => {
+    renderDashboard('Viewer', [camera], camera.cameraId, () => {}, 'people');
+    expect(screen.getByRole('region', { name: 'Monitoramento' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Pessoas' })).not.toBeInTheDocument();
+  });
+
+  it('renders the controlled clips view without a duplicate in-page tab list', () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const path = String(input);
+      if (path.startsWith('/api/v1/clips?'))
+        return new Response(JSON.stringify({ items: [], page: 1, pageSize: 12, totalCount: 0 }), {
+          status: 200,
+        });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    render(
+      <I18nProvider>
+        <Dashboard
+          cameras={[camera]}
+          selectedCameraId={camera.cameraId}
+          onCameraSelect={() => {}}
+          userRole="Viewer"
+          activeView="clips"
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.queryByRole('tablist', { name: 'Seções de monitoramento' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Clipes' })).toBeInTheDocument();
   });
 
   it('presents one camera without adding a redundant selector', () => {
@@ -168,9 +191,7 @@ describe('dashboard navigation', () => {
       throw new Error(`Unexpected request: ${method} ${path}`);
     });
 
-    renderDashboard('Administrator', [activeCamera], activeCamera.cameraId);
-    const menu = screen.getByRole('tablist', { name: 'Seções de monitoramento' });
-    await userEvent.setup().click(within(menu).getByRole('tab', { name: 'Câmeras' }));
+    renderDashboard('Administrator', [activeCamera], activeCamera.cameraId, () => {}, 'cameras');
     expect(await screen.findByRole('heading', { name: 'Configuração da câmera' })).toBeInTheDocument();
     expect(screen.getByLabelText('Endereço IPv4 ou hostname local da câmera')).toHaveValue('192.168.0.120');
 
@@ -234,8 +255,7 @@ describe('dashboard navigation', () => {
         );
       throw new Error(`Unexpected request: ${path}`);
     });
-    renderDashboard('Viewer');
-    await userEvent.setup().click(screen.getByRole('tab', { name: 'Clipes' }));
+    renderDashboard('Viewer', [camera], camera.cameraId, () => {}, 'clips');
     expect(await screen.findByText('Linha do tempo de clipes')).toBeInTheDocument();
     expect(await screen.findByText('garage-01 · 20 B')).toBeInTheDocument();
     expect(screen.getAllByText('Pronto').some((element) => element.classList.contains('badge'))).toBe(true);

@@ -32,7 +32,8 @@ describe('monitoring remote module', () => {
     });
 
     expect(screen.getByText('garage-01')).toBeInTheDocument();
-    expect(screen.getByRole('tablist', { name: 'Seções de monitoramento' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Monitoramento' })).toBeInTheDocument();
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
   });
 
   it('renders the empty state without cameras', () => {

@@ -84,10 +84,9 @@ it('lets an administrator configure the selected per-camera trigger with version
   const user = userEvent.setup();
   render(
     <I18nProvider>
-      <ClipsPanel isAdmin />
+      <ClipsPanel isAdmin view="settings" />
     </I18nProvider>,
   );
-  await user.click(await screen.findByRole('tab', { name: 'Ajustes' }));
   await user.click(await screen.findByRole('button', { name: 'Ativar gatilho' }));
   expect(
     await screen.findByText('Geração automática de clipes ativada para esta câmera.'),
@@ -113,7 +112,7 @@ it('does not request or expose trigger configuration for non-administrators', as
   expect(screen.queryByText('Geração automática de clipes')).not.toBeInTheDocument();
 });
 
-it('opens the clip library first and keeps administrator settings in a separate tab', async () => {
+it('keeps the clip library and the administrator settings as separate submodules', async () => {
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
     const path = String(input);
     if (path.startsWith('/api/v1/clips?')) return json({ items: [], page: 1, pageSize: 20, total: 0 });
@@ -130,15 +129,19 @@ it('opens the clip library first and keeps administrator settings in a separate 
       });
     throw new Error(`Unexpected request: ${path}`);
   });
-  const user = userEvent.setup();
-  render(
+  const view = render(
     <I18nProvider>
       <ClipsPanel isAdmin />
     </I18nProvider>,
   );
   expect(await screen.findByText('Nenhum clipe corresponde aos filtros.')).toBeInTheDocument();
   expect(screen.queryByText('Geração automática de clipes')).not.toBeInTheDocument();
-  await user.click(screen.getByRole('tab', { name: 'Ajustes' }));
+  expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+  view.rerender(
+    <I18nProvider>
+      <ClipsPanel isAdmin view="settings" />
+    </I18nProvider>,
+  );
   expect(await screen.findByText('Geração automática de clipes')).toBeInTheDocument();
 });
 
@@ -208,18 +211,21 @@ it('saves per-camera retention settings and preserves a clip through versioned a
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
   const user = userEvent.setup();
-  render(
+  const view = render(
     <I18nProvider>
-      <ClipsPanel isAdmin />
+      <ClipsPanel isAdmin view="settings" />
     </I18nProvider>,
   );
-  await user.click(await screen.findByRole('tab', { name: 'Ajustes' }));
   await user.clear(await screen.findByLabelText('Retenção (dias)'));
   await user.type(screen.getByLabelText('Retenção (dias)'), '30');
   await user.type(screen.getByLabelText('Limite do arquivo (GB)'), '50');
   await user.click(screen.getByRole('button', { name: 'Salvar limites' }));
   expect(await screen.findByText('Configurações de retenção salvas.')).toBeInTheDocument();
-  await user.click(screen.getByRole('tab', { name: 'Clipes' }));
+  view.rerender(
+    <I18nProvider>
+      <ClipsPanel isAdmin />
+    </I18nProvider>,
+  );
   await user.click(await screen.findByRole('button', { name: /Detalhes e reprodução/ }));
   await user.click(await screen.findByRole('button', { name: 'Preservar clipe' }));
   expect((await screen.findAllByText('Preservado')).length).toBeGreaterThan(0);
@@ -296,16 +302,19 @@ it('loads persisted policy, saves it with optimistic version, and submits analys
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
   const user = userEvent.setup();
-  render(
+  const view = render(
+    <I18nProvider>
+      <ClipsPanel cameraId={clip.cameraId} view="settings" />
+    </I18nProvider>,
+  );
+  await user.selectOptions(await screen.findByLabelText('Política'), 'always');
+  await user.click(screen.getByRole('button', { name: 'Salvar política' }));
+  expect(await screen.findByText('Política da câmera salva.')).toBeInTheDocument();
+  view.rerender(
     <I18nProvider>
       <ClipsPanel cameraId={clip.cameraId} />
     </I18nProvider>,
   );
-  await user.click(await screen.findByRole('tab', { name: 'Ajustes' }));
-  await user.selectOptions(await screen.findByLabelText('Política'), 'always');
-  await user.click(screen.getByRole('button', { name: 'Salvar política' }));
-  expect(await screen.findByText('Política da câmera salva.')).toBeInTheDocument();
-  await user.click(screen.getByRole('tab', { name: 'Clipes' }));
   await user.click(await screen.findByRole('button', { name: /Detalhes e reprodução/ }));
   await user.click(await screen.findByRole('button', { name: 'Enviar para análise' }));
   expect(await screen.findByText('Solicitação de análise enviada.')).toBeInTheDocument();

@@ -1,5 +1,5 @@
 import type { CameraStatus, TranslationKey, UserRole } from 'home-ia-shared';
-import { ModulePage, ModuleTabs, StatusBadge, useI18n } from 'home-ia-shared';
+import { ModulePage, StatusBadge, useI18n } from 'home-ia-shared';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AdminCameraConnectionPanel } from '../admin/AdminCameraConnectionPanel';
 import { AdminPeoplePanel } from '../admin/AdminPeoplePanel';
@@ -7,11 +7,20 @@ import { ClipsPanel } from '../clips/ClipsPanel';
 import { OperationsPanel } from '../operations/OperationsPanel';
 import { LivePlayer } from './LivePlayer';
 
-type DashboardView = 'monitor' | 'clips' | 'health' | 'dependencies' | 'capture' | 'cameras' | 'people';
+type DashboardView =
+  | 'monitor'
+  | 'clips'
+  | 'clip-settings'
+  | 'health'
+  | 'dependencies'
+  | 'capture'
+  | 'cameras'
+  | 'people';
 
 const viewLabels: Record<DashboardView, TranslationKey> = {
   monitor: 'dashboard.menu.monitor',
   clips: 'dashboard.menu.clips',
+  'clip-settings': 'dashboard.menu.clipSettings',
   health: 'dashboard.menu.health',
   dependencies: 'dashboard.menu.dependencies',
   capture: 'dashboard.menu.capture',
@@ -19,12 +28,22 @@ const viewLabels: Record<DashboardView, TranslationKey> = {
   people: 'dashboard.menu.people',
 };
 
+const administrationViews: ReadonlySet<DashboardView> = new Set([
+  'clip-settings',
+  'health',
+  'dependencies',
+  'capture',
+  'cameras',
+  'people',
+]);
+
 interface DashboardProps {
   cameras: CameraStatus[];
   selectedCameraId?: string;
   onCameraSelect: (cameraId: string) => void;
   userRole: UserRole;
   portalModuleIds?: string[];
+  activeView?: string;
 }
 
 export function Dashboard({
@@ -33,9 +52,9 @@ export function Dashboard({
   onCameraSelect,
   userRole,
   portalModuleIds,
+  activeView,
 }: DashboardProps) {
   const { t } = useI18n();
-  const [active, setActive] = useState<DashboardView>('monitor');
   const [playerStatus, setPlayerStatus] = useState(() => t('player.status.notStarted'));
   const playerAnchorRef = useRef<HTMLDivElement>(null);
   const didAutoScrollRef = useRef(false);
@@ -43,36 +62,14 @@ export function Dashboard({
   const showMonitoring = !portalModuleIds || portalModuleIds.includes('monitoring');
   const showAdministration = !portalModuleIds || portalModuleIds.includes('administration');
   const camera = cameras.find((item) => item.cameraId === selectedCameraId);
-  const tabs = useMemo(() => {
-    const items: Array<{ id: DashboardView; label: string; panelId: string }> = [];
-    if (showMonitoring) {
-      items.push({
-        id: 'monitor',
-        label: t('dashboard.menu.monitor'),
-        panelId: 'view-monitor',
-      });
-      items.push({
-        id: 'clips',
-        label: t('dashboard.menu.clips'),
-        panelId: 'view-clips',
-      });
+  const active = useMemo<DashboardView>(() => {
+    const requested = activeView && activeView in viewLabels ? (activeView as DashboardView) : 'monitor';
+    if (administrationViews.has(requested) && (!isAdmin || !showAdministration)) return 'monitor';
+    if (requested === 'monitor' || requested === 'clips') {
+      return showMonitoring ? requested : 'monitor';
     }
-    if (isAdmin && showAdministration) {
-      for (const id of ['health', 'dependencies', 'capture', 'cameras', 'people'] as const) {
-        items.push({
-          id,
-          label: t(viewLabels[id]),
-          panelId: `view-${id}`,
-        });
-      }
-    }
-    return items;
-  }, [isAdmin, showAdministration, showMonitoring, t]);
-  useEffect(() => {
-    if (tabs.length > 0 && !tabs.some((tab) => tab.id === active)) {
-      setActive(tabs[0]?.id ?? 'monitor');
-    }
-  }, [active, tabs]);
+    return requested;
+  }, [activeView, isAdmin, showAdministration, showMonitoring]);
   useEffect(() => {
     if (didAutoScrollRef.current || active !== 'monitor' || !camera) return;
     const frame = window.requestAnimationFrame(() => {
@@ -102,14 +99,8 @@ export function Dashboard({
       title={t('shell.modules.monitoring')}
       description={t('monitoring.module.description')}
     >
-      <ModuleTabs
-        label={t('monitoring.module.tabs.label')}
-        items={tabs}
-        active={active}
-        onChange={setActive}
-      />
-      {showMonitoring && (
-        <section id="view-monitor" aria-labelledby="module-tab-monitor" hidden={active !== 'monitor'}>
+      {showMonitoring && active === 'monitor' && (
+        <section id="view-monitor" aria-label={t(viewLabels.monitor)}>
           {cameras.length > 0 ? (
             <>
               <section className="camera-collection mb-3" aria-label={t('dashboard.cameras.title')}>
@@ -176,25 +167,30 @@ export function Dashboard({
         </section>
       )}
       {showMonitoring && active === 'clips' && (
-        <section id="view-clips" aria-labelledby="module-tab-clips">
+        <div id="view-clips">
           <ClipsPanel cameraId={camera?.cameraId} isAdmin={isAdmin} />
+        </div>
+      )}
+      {showMonitoring && active === 'clip-settings' && (
+        <section id="view-clip-settings" aria-label={t(viewLabels['clip-settings'])}>
+          <ClipsPanel cameraId={camera?.cameraId} isAdmin={isAdmin} view="settings" />
         </section>
       )}
       {showAdministration &&
         isAdmin &&
         camera &&
         (active === 'health' || active === 'dependencies' || active === 'capture') && (
-          <section id={`view-${active}`} aria-labelledby={`module-tab-${active}`}>
+          <section id={`view-${active}`} aria-label={t(viewLabels[active])}>
             <OperationsPanel camera={camera} view={active} playerStatus={playerStatus} />
           </section>
         )}
       {showAdministration && isAdmin && active === 'people' && (
-        <section id="view-people" aria-labelledby="module-tab-people">
+        <section id="view-people" aria-label={t(viewLabels.people)}>
           <AdminPeoplePanel />
         </section>
       )}
       {showAdministration && isAdmin && camera && active === 'cameras' && (
-        <section id="view-cameras" aria-labelledby="module-tab-cameras">
+        <section id="view-cameras" aria-label={t(viewLabels.cameras)}>
           <AdminCameraConnectionPanel cameraId={camera.cameraId} />
         </section>
       )}

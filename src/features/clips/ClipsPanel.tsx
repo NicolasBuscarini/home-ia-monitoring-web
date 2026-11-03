@@ -125,7 +125,15 @@ function createIdempotencyKey(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-export function ClipsPanel({ cameraId, isAdmin = false }: { cameraId?: string; isAdmin?: boolean }) {
+export function ClipsPanel({
+  cameraId,
+  isAdmin = false,
+  view = 'library',
+}: {
+  cameraId?: string;
+  isAdmin?: boolean;
+  view?: 'library' | 'settings';
+}) {
   const { t, locale } = useI18n();
   const [items, setItems] = useState<ClipItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -164,7 +172,6 @@ export function ClipsPanel({ cameraId, isAdmin = false }: { cameraId?: string; i
     text: string;
     error: boolean;
   }>();
-  const [view, setView] = useState<'library' | 'settings'>('library');
   const [range, setRange] = useState<'all' | 'today' | '7d' | '30d' | 'custom'>('all');
   const [detailLoading, setDetailLoading] = useState<string>();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -693,17 +700,6 @@ export function ClipsPanel({ cameraId, isAdmin = false }: { cameraId?: string; i
     return 'text-bg-secondary';
   }
 
-  const showSettings =
-    isAdmin ||
-    Boolean(cameraId) ||
-    dispatchPolicies.length > 0 ||
-    policyLoading ||
-    policyLoadErrors.length > 0;
-
-  useEffect(() => {
-    if (!showSettings && view === 'settings') setView('library');
-  }, [showSettings, view]);
-
   return (
     <section className="panel-card clips-panel" aria-labelledby="clips-title">
       <div className="clips-header">
@@ -726,52 +722,8 @@ export function ClipsPanel({ cameraId, isAdmin = false }: { cameraId?: string; i
         </div>
       </div>
 
-      {showSettings && (
-        <div className="clips-tabs" role="tablist" aria-label={t('clips.tabs.label')}>
-          <button
-            id="clips-tab-library"
-            className="clips-tab"
-            type="button"
-            role="tab"
-            aria-selected={view === 'library'}
-            aria-controls="clips-view-library"
-            tabIndex={view === 'library' ? 0 : -1}
-            onClick={() => setView('library')}
-            onKeyDown={(event) => {
-              if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
-              event.preventDefault();
-              setView('settings');
-              document.getElementById('clips-tab-settings')?.focus();
-            }}
-          >
-            {t('clips.tab.library')}
-          </button>
-          <button
-            id="clips-tab-settings"
-            className="clips-tab"
-            type="button"
-            role="tab"
-            aria-selected={view === 'settings'}
-            aria-controls="clips-view-settings"
-            tabIndex={view === 'settings' ? 0 : -1}
-            onClick={() => setView('settings')}
-            onKeyDown={(event) => {
-              if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
-              event.preventDefault();
-              setView('library');
-              document.getElementById('clips-tab-library')?.focus();
-            }}
-          >
-            {t('clips.tab.settings')}
-          </button>
-        </div>
-      )}
-
       {view === 'library' && (
-        <div
-          id="clips-view-library"
-          {...(showSettings ? { role: 'tabpanel', 'aria-labelledby': 'clips-tab-library' } : {})}
-        >
+        <section id="clips-view-library" aria-label={t('clips.tab.library')}>
           <form
             className="clips-filters"
             onSubmit={(event) => {
@@ -990,16 +942,11 @@ export function ClipsPanel({ cameraId, isAdmin = false }: { cameraId?: string; i
               </div>
             </>
           )}
-        </div>
+        </section>
       )}
 
-      {view === 'settings' && showSettings && (
-        <div
-          id="clips-view-settings"
-          role="tabpanel"
-          aria-labelledby="clips-tab-settings"
-          className="clips-settings"
-        >
+      {view === 'settings' && (
+        <section id="clips-view-settings" aria-label={t('clips.tab.settings')} className="clips-settings">
           <p className="small text-secondary mb-0">{t('clips.settings.description')}</p>
           {isAdmin && (
             <section className="panel-card" aria-labelledby="clip-trigger-title">
@@ -1223,7 +1170,7 @@ export function ClipsPanel({ cameraId, isAdmin = false }: { cameraId?: string; i
               </ul>
             </section>
           )}
-        </div>
+        </section>
       )}
 
       {selected &&

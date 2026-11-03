@@ -8,6 +8,7 @@ export interface MonitoringModuleProps {
   onCameraSelect: (cameraId: string) => void;
   userRole: UserRole;
   portalModuleIds?: string[];
+  activeView?: string;
 }
 
 export default function MonitoringModule({
@@ -16,6 +17,7 @@ export default function MonitoringModule({
   onCameraSelect,
   userRole,
   portalModuleIds,
+  activeView,
 }: MonitoringModuleProps) {
   return (
     <Dashboard
@@ -24,6 +26,7 @@ export default function MonitoringModule({
       onCameraSelect={onCameraSelect}
       userRole={userRole}
       portalModuleIds={portalModuleIds}
+      activeView={activeView}
     />
   );
 }
