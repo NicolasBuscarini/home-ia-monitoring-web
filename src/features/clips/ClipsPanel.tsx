@@ -1,6 +1,13 @@
 import type { TranslationKey } from 'home-ia-shared';
 import { ApiError, getJson, request, useI18n } from 'home-ia-shared';
-import { useCallback, useEffect, useState } from 'react';
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 interface ClipItem {
   publicId: string;
@@ -33,6 +40,13 @@ interface ClipDetails {
 }
 
 const PAGE_SIZE = 20;
+
+function dayKey(value: string) {
+  const date = new Date(value);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
+    date.getDate(),
+  ).padStart(2, '0')}`;
+}
 const stateKeys: Record<string, TranslationKey> = {
   collecting: 'clips.state.collecting',
   ready: 'clips.state.ready',
@@ -149,6 +163,11 @@ export function ClipsPanel({ cameraId, isAdmin = false }: { cameraId?: string; i
     text: string;
     error: boolean;
   }>();
+  const [view, setView] = useState<'library' | 'settings'>('library');
+  const [range, setRange] = useState<'all' | 'today' | '7d' | '30d' | 'custom'>('all');
+  const [detailLoading, setDetailLoading] = useState<string>();
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const lastFocusRef = useRef<HTMLElement | null>(null);
 
   const loadDispatchPolicies = useCallback(async (cameraIds: string[]) => {
     const ids = [...new Set(cameraIds.filter(Boolean))];
@@ -177,15 +196,18 @@ export function ClipsPanel({ cameraId, isAdmin = false }: { cameraId?: string; i
   }, []);
 
   const load = useCallback(
-    async (targetPage = 1) => {
+    async (targetPage = 1, overrides?: { from?: string; to?: string; state?: string }) => {
+      const fromValue = overrides?.from ?? from;
+      const toValue = overrides?.to ?? to;
+      const stateValue = overrides?.state ?? state;
       setBusy(true);
       setError('');
       try {
         const query = new URLSearchParams({ page: String(targetPage), pageSize: String(PAGE_SIZE) });
         if (cameraId) query.set('cameraId', cameraId);
-        if (state) query.set('state', state);
-        if (from) query.set('fromUtc', new Date(`${from}T00:00:00Z`).toISOString());
-        if (to) query.set('toUtc', new Date(`${to}T23:59:59.999Z`).toISOString());
+        if (stateValue) query.set('state', stateValue);
+        if (fromValue) query.set('fromUtc', new Date(`${fromValue}T00:00:00Z`).toISOString());
+        if (toValue) query.set('toUtc', new Date(`${toValue}T23:59:59.999Z`).toISOString());
         const result = await getJson<ClipPage>(`/api/v1/clips?${query}`);
         setItems(result.items);
         setTotal(result.total);
@@ -523,7 +545,9 @@ export function ClipsPanel({ cameraId, isAdmin = false }: { cameraId?: string; i
   }
 
   async function openClip(clipId: string) {
+    lastFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setSelected(undefined);
+    setDetailLoading(clipId);
     setPlaybackError(false);
     setPlaybackAttempt(0);
     setError('');
@@ -535,6 +559,52 @@ export function ClipsPanel({ cameraId, isAdmin = false }: { cameraId?: string; i
           ? t('clips.error.denied')
           : t('clips.error.detail'),
       );
+    } finally {
+      setDetailLoading(undefined);
+    }
+  }
+
+  const closeDetail = useCallback(() => {
+    setSelected(undefined);
+    setPlaybackError(false);
+    setPlaybackAttempt(0);
+    lastFocusRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (!selected) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeDetail();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    closeButtonRef.current?.focus();
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [closeDetail, selected]);
+
+  function handleDialogKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key !== 'Tab') return;
+    const focusable = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), video, [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!first || !last) return;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
     }
   }
 
@@ -544,411 +614,716 @@ export function ClipsPanel({ cameraId, isAdmin = false }: { cameraId?: string; i
       timeStyle: 'short',
     }).format(new Date(value));
 
+  const formatDateOnly = (value: string) =>
+    new Intl.DateTimeFormat(locale, { dateStyle: 'full' }).format(new Date(value));
+
+  const formatTime = (value: string) =>
+    new Intl.DateTimeFormat(locale, { timeStyle: 'short' }).format(new Date(value));
+
+  function formatDuration(startedAtUtc: string, endedAtUtc: string) {
+    const seconds = Math.max(
+      0,
+      Math.round((new Date(endedAtUtc).getTime() - new Date(startedAtUtc).getTime()) / 1000),
+    );
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  }
+
+  function formatSize(sizeBytes: number | null) {
+    if (sizeBytes === null) return t('clips.unknown');
+    if (sizeBytes >= 1024 ** 3) return `${(sizeBytes / 1024 ** 3).toFixed(1)} GB`;
+    if (sizeBytes >= 1024 ** 2) return `${(sizeBytes / 1024 ** 2).toFixed(1)} MB`;
+    if (sizeBytes >= 1024) return `${Math.round(sizeBytes / 1024)} KB`;
+    return `${sizeBytes} B`;
+  }
+
+  const groups = useMemo(() => {
+    const map = new Map<string, ClipItem[]>();
+    for (const clip of items) {
+      const key = dayKey(clip.startedAtUtc);
+      const list = map.get(key) ?? [];
+      list.push(clip);
+      map.set(key, list);
+    }
+    return [...map.entries()];
+  }, [items]);
+
+  function applyQuickRange(value: 'all' | 'today' | '7d' | '30d') {
+    const today = new Date();
+    const toValue = value === 'all' ? '' : today.toISOString().slice(0, 10);
+    let fromValue = '';
+    if (value === 'today') fromValue = toValue;
+    if (value === '7d' || value === '30d') {
+      const start = new Date(today);
+      start.setUTCDate(start.getUTCDate() - (value === '7d' ? 6 : 29));
+      fromValue = start.toISOString().slice(0, 10);
+    }
+    setRange(value);
+    setFrom(fromValue);
+    setTo(toValue);
+    void load(1, { from: fromValue, to: toValue });
+  }
+
+  function clearFilters() {
+    setRange('all');
+    setFrom('');
+    setTo('');
+    setState('');
+    void load(1, { from: '', to: '', state: '' });
+  }
+
+  function mediaBadgeClass(value: string) {
+    if (value === 'ready') return 'text-bg-success';
+    if (value === 'collecting') return 'text-bg-info';
+    return 'text-bg-danger';
+  }
+
+  function archiveBadgeClass(value: string) {
+    if (value === 'archived') return 'text-bg-success';
+    if (value === 'failed' || value === 'expired') return 'text-bg-danger';
+    if (['pending', 'copying', 'verifying', 'retry_wait', 'expiring'].includes(value)) {
+      return 'text-bg-warning';
+    }
+    return 'text-bg-secondary';
+  }
+
+  function analysisBadgeClass(value: string) {
+    if (value === 'failed') return 'text-bg-danger';
+    if (['processing', 'analysis_pending', 'retry_wait'].includes(value)) return 'text-bg-info';
+    return 'text-bg-secondary';
+  }
+
+  const showSettings =
+    isAdmin ||
+    Boolean(cameraId) ||
+    dispatchPolicies.length > 0 ||
+    policyLoading ||
+    policyLoadErrors.length > 0;
+
+  useEffect(() => {
+    if (!showSettings && view === 'settings') setView('library');
+  }, [showSettings, view]);
+
   return (
     <section className="panel-card clips-panel" aria-labelledby="clips-title">
-      <span className="eyebrow">{t('clips.eyebrow')}</span>
-      <h2 id="clips-title" className="h5 mt-2">
-        {t('clips.title')}
-      </h2>
-      <p className="small text-secondary">{t('clips.description')}</p>
-      {isAdmin && (
-        <section className="panel-card mb-3" aria-labelledby="clip-trigger-title">
-          <h3 id="clip-trigger-title" className="h6">
-            {t('clips.trigger.title')}
-          </h3>
-          <p className="small text-secondary">{t('clips.trigger.description')}</p>
-          {triggerError && (
-            <p role="alert" className="error-text">
-              {triggerError}
-            </p>
-          )}
-          {triggerMessage && (
-            <p role="status" aria-live="polite">
-              {triggerMessage}
-            </p>
-          )}
-          {triggerLoading && (
-            <p role="status" aria-live="polite">
-              {t('clips.trigger.loading')}
-            </p>
-          )}
-          <ul className="list-unstyled mb-0">
-            {triggerConfigurations.map((setting) => (
-              <li
-                key={setting.cameraId}
-                className="d-flex flex-wrap align-items-center justify-content-between gap-2 py-2"
-              >
-                <span>{setting.name ?? setting.cameraId}</span>
+      <div className="clips-header">
+        <div>
+          <span className="eyebrow">{t('clips.eyebrow')}</span>
+          <h2 id="clips-title" className="h5 mt-2">
+            {t('clips.title')}
+          </h2>
+          <p className="small text-secondary mb-0">{t('clips.description')}</p>
+        </div>
+        <div className="clips-header-actions">
+          <button
+            className="btn btn-outline-secondary btn-sm"
+            type="button"
+            disabled={busy}
+            onClick={() => void load(page)}
+          >
+            {t('clips.refresh')}
+          </button>
+        </div>
+      </div>
+
+      {showSettings && (
+        <div className="clips-tabs" role="tablist" aria-label={t('clips.tabs.label')}>
+          <button
+            id="clips-tab-library"
+            className="clips-tab"
+            type="button"
+            role="tab"
+            aria-selected={view === 'library'}
+            aria-controls="clips-view-library"
+            tabIndex={view === 'library' ? 0 : -1}
+            onClick={() => setView('library')}
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+              event.preventDefault();
+              setView('settings');
+              document.getElementById('clips-tab-settings')?.focus();
+            }}
+          >
+            {t('clips.tab.library')}
+          </button>
+          <button
+            id="clips-tab-settings"
+            className="clips-tab"
+            type="button"
+            role="tab"
+            aria-selected={view === 'settings'}
+            aria-controls="clips-view-settings"
+            tabIndex={view === 'settings' ? 0 : -1}
+            onClick={() => setView('settings')}
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+              event.preventDefault();
+              setView('library');
+              document.getElementById('clips-tab-library')?.focus();
+            }}
+          >
+            {t('clips.tab.settings')}
+          </button>
+        </div>
+      )}
+
+      {view === 'library' && (
+        <div
+          id="clips-view-library"
+          {...(showSettings ? { role: 'tabpanel', 'aria-labelledby': 'clips-tab-library' } : {})}
+        >
+          <form
+            className="clips-filters"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void load(1);
+            }}
+          >
+            <fieldset className="clips-quick-ranges">
+              <legend className="visually-hidden">{t('clips.quickRange.label')}</legend>
+              {(['today', '7d', '30d', 'all'] as const).map((value) => (
                 <button
-                  className={`btn ${setting.enabled ? 'btn-outline-danger' : 'btn-outline-primary'}`}
+                  key={value}
+                  className={`btn btn-sm ${range === value ? 'btn-primary' : 'btn-outline-secondary'}`}
                   type="button"
-                  disabled={triggerLoading || triggerBusy !== undefined}
-                  aria-pressed={setting.enabled}
-                  onClick={() => void updateTrigger(setting)}
+                  aria-pressed={range === value}
+                  onClick={() => applyQuickRange(value)}
                 >
-                  {triggerBusy === setting.cameraId
-                    ? t('clips.trigger.saving')
-                    : t(setting.enabled ? 'clips.trigger.turnOff' : 'clips.trigger.turnOn')}
+                  {t(`clips.quickRange.${value}`)}
                 </button>
-              </li>
-            ))}
-          </ul>
-          {triggerConfigurations.length === 0 && !triggerError && !triggerLoading && (
-            <p role="status">{t('clips.trigger.empty')}</p>
+              ))}
+            </fieldset>
+            <div className="row g-2 align-items-end">
+              <div className="col-12 col-sm-6 col-lg-3">
+                <label className="form-label" htmlFor="clips-from">
+                  {t('clips.from')}
+                </label>
+                <input
+                  className="form-control"
+                  id="clips-from"
+                  type="date"
+                  value={from}
+                  onChange={(event) => {
+                    setFrom(event.target.value);
+                    setRange('custom');
+                  }}
+                />
+              </div>
+              <div className="col-12 col-sm-6 col-lg-3">
+                <label className="form-label" htmlFor="clips-to">
+                  {t('clips.to')}
+                </label>
+                <input
+                  className="form-control"
+                  id="clips-to"
+                  type="date"
+                  value={to}
+                  onChange={(event) => {
+                    setTo(event.target.value);
+                    setRange('custom');
+                  }}
+                />
+              </div>
+              <div className="col-12 col-sm-6 col-lg-3">
+                <label className="form-label" htmlFor="clips-state">
+                  {t('clips.state.label')}
+                </label>
+                <select
+                  className="form-select"
+                  id="clips-state"
+                  value={state}
+                  onChange={(event) => setState(event.target.value)}
+                >
+                  <option value="">{t('clips.state.all')}</option>
+                  {(['collecting', 'ready', 'failed', 'lost_capacity'] as const).map((item) => (
+                    <option key={item} value={item}>
+                      {t(`clips.state.${item}`)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-12 col-lg-3">
+                <button className="btn btn-secondary w-100" type="submit" disabled={busy}>
+                  {t('clips.filter')}
+                </button>
+              </div>
+            </div>
+            {(from || to || state) && (
+              <div className="clips-filter-summary">
+                <span>{t('clips.filters.active')}</span>
+                <button className="btn btn-link btn-sm p-0" type="button" onClick={clearFilters}>
+                  {t('clips.filters.clear')}
+                </button>
+              </div>
+            )}
+          </form>
+
+          <div className="clips-results-header">
+            <span aria-live="polite">{t('clips.resultCount', { count: total })}</span>
+            {busy && (
+              <span role="status" aria-live="polite">
+                {t('clips.loading')}
+              </span>
+            )}
+          </div>
+
+          {error && (
+            <div className="error-text" role="alert">
+              <p>{error}</p>
+              <button
+                className="btn btn-outline-secondary btn-sm"
+                type="button"
+                onClick={() => void load(page)}
+              >
+                {t('clips.retry')}
+              </button>
+            </div>
           )}
-        </section>
+
+          {!busy && !error && items.length === 0 && (
+            <div className="clips-empty" role="status">
+              <p className="mb-2">{t('clips.empty')}</p>
+              {(from || to || state) && (
+                <button className="btn btn-outline-secondary btn-sm" type="button" onClick={clearFilters}>
+                  {t('clips.filters.clear')}
+                </button>
+              )}
+            </div>
+          )}
+
+          {items.length > 0 && (
+            <>
+              <div className="clip-groups">
+                {groups.map(([key, clips]) => (
+                  <section className="clip-day" key={key} aria-labelledby={`clip-day-${key}`}>
+                    <h3 id={`clip-day-${key}`} className="clip-day-title">
+                      {formatDateOnly(
+                        clips[0]?.startedAtUtc ?? items[0]?.startedAtUtc ?? new Date().toISOString(),
+                      )}
+                    </h3>
+                    <ul className="clip-card-grid" aria-label={t('clips.timeline')}>
+                      {clips.map((clip) => (
+                        <li className="clip-card" key={clip.publicId}>
+                          <button
+                            className="clip-card-open"
+                            type="button"
+                            aria-busy={detailLoading === clip.publicId}
+                            aria-label={`${t('clips.details')}: ${formatDate(clip.startedAtUtc)}`}
+                            onClick={() => void openClip(clip.publicId)}
+                          >
+                            <span className="clip-card-media">
+                              {clip.thumbnailUrl ? (
+                                <img
+                                  src={clip.thumbnailUrl}
+                                  alt=""
+                                  loading="lazy"
+                                  className="clip-thumbnail"
+                                />
+                              ) : (
+                                <span
+                                  className="clip-thumbnail clip-thumbnail-placeholder"
+                                  aria-hidden="true"
+                                >
+                                  ▶
+                                </span>
+                              )}
+                              <span className="clip-card-duration">
+                                {formatDuration(clip.startedAtUtc, clip.endedAtUtc)}
+                              </span>
+                            </span>
+                            <span className="clip-card-body">
+                              <span className="clip-card-time">
+                                {formatTime(clip.startedAtUtc)} – {formatTime(clip.endedAtUtc)}
+                              </span>
+                              <span className="clip-card-meta">
+                                {clip.cameraId} · {formatSize(clip.sizeBytes)}
+                              </span>
+                              <span className="clip-card-badges">
+                                <span className={`badge ${mediaBadgeClass(clip.state)}`}>
+                                  {t(stateKeys[clip.state] ?? 'clips.unknown')}
+                                </span>
+                                <span className={`badge ${archiveBadgeClass(clip.archiveStatus)}`}>
+                                  {t(archiveKeys[clip.archiveStatus] ?? 'clips.unknown')}
+                                </span>
+                                {clip.analysisStatus !== 'not_requested' && (
+                                  <span className={`badge ${analysisBadgeClass(clip.analysisStatus)}`}>
+                                    {t('clips.analysis')}:{' '}
+                                    {t(analysisKeys[clip.analysisStatus] ?? 'clips.unknown')}
+                                  </span>
+                                )}
+                                {clip.isPreserved && (
+                                  <span className="badge text-bg-warning">
+                                    {t('clips.preservation.preserved')}
+                                  </span>
+                                )}
+                              </span>
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ))}
+              </div>
+              <div className="clips-pagination">
+                <span aria-live="polite">
+                  {t('clips.page', { current: page, total: Math.max(1, Math.ceil(total / PAGE_SIZE)) })}
+                </span>
+                <div className="d-flex gap-2">
+                  <button
+                    className="btn btn-outline-secondary btn-sm"
+                    type="button"
+                    disabled={busy || page <= 1}
+                    onClick={() => void load(page - 1)}
+                  >
+                    {t('clips.previous')}
+                  </button>
+                  <button
+                    className="btn btn-outline-secondary btn-sm"
+                    type="button"
+                    disabled={busy || page * PAGE_SIZE >= total}
+                    onClick={() => void load(page + 1)}
+                  >
+                    {t('clips.next')}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
       )}
-      {isAdmin && (
-        <section className="panel-card mb-3" aria-labelledby="clip-retention-title">
-          <h3 id="clip-retention-title" className="h6">
-            {t('clips.retention.title')}
-          </h3>
-          <p className="small text-secondary">{t('clips.retention.description')}</p>
-          {retentionNotice && (
-            <p
-              role={retentionNotice.error ? 'alert' : 'status'}
-              aria-live="polite"
-              className={retentionNotice.error ? 'error-text' : undefined}
-            >
-              {retentionNotice.text}
-            </p>
-          )}
-          {retentionLoading && (
-            <p role="status" aria-live="polite">
-              {t('clips.retention.loading')}
-            </p>
-          )}
-          <ul className="list-unstyled mb-0">
-            {retentionConfigurations.map((setting) => {
-              const draft = retentionDrafts[setting.cameraId] ?? {
-                days: setting.retentionDays,
-                gigabytes:
-                  setting.maximumStorageGigabytes === null ? '' : String(setting.maximumStorageGigabytes),
-              };
-              return (
-                <li key={setting.cameraId} className="border-top py-3">
-                  <strong>{setting.name ?? setting.cameraId}</strong>
-                  <div className="d-flex flex-wrap align-items-end gap-2 mt-2">
-                    <div>
-                      <label className="form-label" htmlFor={`clip-retention-days-${setting.cameraId}`}>
-                        {t('clips.retention.days')}
-                      </label>
-                      <input
-                        className="form-control"
-                        id={`clip-retention-days-${setting.cameraId}`}
-                        type="number"
-                        min="1"
-                        max="3650"
-                        value={draft.days}
-                        disabled={retentionBusyCamera !== undefined}
-                        onChange={(event) =>
-                          setRetentionDrafts((current) => ({
-                            ...current,
-                            [setting.cameraId]: { ...draft, days: Number(event.target.value) },
-                          }))
-                        }
-                      />
-                    </div>
-                    <div>
-                      <label className="form-label" htmlFor={`clip-retention-gb-${setting.cameraId}`}>
-                        {t('clips.retention.quota')}
-                      </label>
-                      <input
-                        className="form-control"
-                        id={`clip-retention-gb-${setting.cameraId}`}
-                        type="number"
-                        min="1"
-                        max="1024"
-                        placeholder={t('clips.retention.unlimited')}
-                        value={draft.gigabytes}
-                        disabled={retentionBusyCamera !== undefined}
-                        onChange={(event) =>
-                          setRetentionDrafts((current) => ({
-                            ...current,
-                            [setting.cameraId]: { ...draft, gigabytes: event.target.value },
-                          }))
-                        }
-                      />
-                    </div>
+
+      {view === 'settings' && showSettings && (
+        <div
+          id="clips-view-settings"
+          role="tabpanel"
+          aria-labelledby="clips-tab-settings"
+          className="clips-settings"
+        >
+          <p className="small text-secondary mb-0">{t('clips.settings.description')}</p>
+          {isAdmin && (
+            <section className="panel-card" aria-labelledby="clip-trigger-title">
+              <h3 id="clip-trigger-title" className="h6">
+                {t('clips.trigger.title')}
+              </h3>
+              <p className="small text-secondary">{t('clips.trigger.description')}</p>
+              {triggerError && (
+                <p role="alert" className="error-text">
+                  {triggerError}
+                </p>
+              )}
+              {triggerMessage && (
+                <p role="status" aria-live="polite">
+                  {triggerMessage}
+                </p>
+              )}
+              {triggerLoading && (
+                <p role="status" aria-live="polite">
+                  {t('clips.trigger.loading')}
+                </p>
+              )}
+              <ul className="list-unstyled mb-0">
+                {triggerConfigurations.map((setting) => (
+                  <li
+                    key={setting.cameraId}
+                    className="d-flex flex-wrap align-items-center justify-content-between gap-2 py-2"
+                  >
+                    <span>{setting.name ?? setting.cameraId}</span>
                     <button
-                      className="btn btn-secondary"
+                      className={`btn ${setting.enabled ? 'btn-outline-danger' : 'btn-outline-primary'}`}
                       type="button"
-                      disabled={
-                        retentionBusyCamera !== undefined ||
-                        (draft.days === setting.retentionDays &&
-                          (draft.gigabytes === '' ? null : Number(draft.gigabytes)) ===
-                            setting.maximumStorageGigabytes)
-                      }
-                      onClick={() => void updateRetention(setting)}
+                      disabled={triggerLoading || triggerBusy !== undefined}
+                      aria-pressed={setting.enabled}
+                      onClick={() => void updateTrigger(setting)}
                     >
-                      {retentionBusyCamera === setting.cameraId
-                        ? t('clips.retention.saving')
-                        : t('clips.retention.save')}
+                      {triggerBusy === setting.cameraId
+                        ? t('clips.trigger.saving')
+                        : t(setting.enabled ? 'clips.trigger.turnOff' : 'clips.trigger.turnOn')}
                     </button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      )}
-      {(cameraId || dispatchPolicies.length > 0 || policyLoading || policyLoadErrors.length > 0) && (
-        <section className="panel-card mb-3" aria-labelledby="clip-policy-title">
-          <h3 id="clip-policy-title" className="h6">
-            {t('clips.policy.title')}
-          </h3>
-          <p className="small text-secondary">{t('clips.policy.description')}</p>
-          {policyLoading && (
-            <p role="status" aria-live="polite">
-              {t('clips.policy.loading')}
-            </p>
+                  </li>
+                ))}
+              </ul>
+              {triggerConfigurations.length === 0 && !triggerError && !triggerLoading && (
+                <p role="status">{t('clips.trigger.empty')}</p>
+              )}
+            </section>
           )}
-          {policyNotice && (
-            <p
-              role={policyNotice.error ? 'alert' : 'status'}
-              aria-live="polite"
-              className={policyNotice.error ? 'error-text' : undefined}
-            >
-              {policyNotice.text}
-            </p>
-          )}
-          {policyLoadErrors.length > 0 && (
-            <p role="alert" className="error-text">
-              {t('clips.policy.unavailable')}
-            </p>
-          )}
-          <ul className="list-unstyled mb-0">
-            {dispatchPolicies.map((setting) => {
-              const draft = policyDrafts[setting.cameraId] ?? setting.policy;
-              return (
-                <li key={setting.cameraId} className="border-top py-3">
-                  <strong>{setting.cameraId}</strong>
-                  <p className="small text-secondary mt-1 mb-2">
-                    {t('clips.policy.current', { policy: t(dispatchPolicyKeys[setting.policy]) })} —{' '}
-                    {t(dispatchPolicyDescriptionKeys[setting.policy])}
-                  </p>
-                  {setting.policy === 'never' && (
-                    <p className="small text-secondary">{t('clips.policy.neverExplanation')}</p>
-                  )}
-                  {setting.canManage && (
-                    <div className="d-flex flex-wrap align-items-end gap-2">
-                      <div className="flex-grow-1">
-                        <label className="form-label" htmlFor={`clip-policy-${setting.cameraId}`}>
-                          {t('clips.policy.label')}
-                        </label>
-                        <select
-                          className="form-select"
-                          id={`clip-policy-${setting.cameraId}`}
-                          value={draft}
-                          disabled={policyBusyCamera !== undefined}
-                          onChange={(event) =>
-                            setPolicyDrafts((current) => ({
-                              ...current,
-                              [setting.cameraId]: event.target.value as DispatchPolicy,
-                            }))
+          {isAdmin && (
+            <section className="panel-card" aria-labelledby="clip-retention-title">
+              <h3 id="clip-retention-title" className="h6">
+                {t('clips.retention.title')}
+              </h3>
+              <p className="small text-secondary">{t('clips.retention.description')}</p>
+              {retentionNotice && (
+                <p
+                  role={retentionNotice.error ? 'alert' : 'status'}
+                  aria-live="polite"
+                  className={retentionNotice.error ? 'error-text' : undefined}
+                >
+                  {retentionNotice.text}
+                </p>
+              )}
+              {retentionLoading && (
+                <p role="status" aria-live="polite">
+                  {t('clips.retention.loading')}
+                </p>
+              )}
+              <ul className="list-unstyled mb-0">
+                {retentionConfigurations.map((setting) => {
+                  const draft = retentionDrafts[setting.cameraId] ?? {
+                    days: setting.retentionDays,
+                    gigabytes:
+                      setting.maximumStorageGigabytes === null ? '' : String(setting.maximumStorageGigabytes),
+                  };
+                  return (
+                    <li key={setting.cameraId} className="border-top py-3">
+                      <strong>{setting.name ?? setting.cameraId}</strong>
+                      <div className="d-flex flex-wrap align-items-end gap-2 mt-2">
+                        <div>
+                          <label className="form-label" htmlFor={`clip-retention-days-${setting.cameraId}`}>
+                            {t('clips.retention.days')}
+                          </label>
+                          <input
+                            className="form-control"
+                            id={`clip-retention-days-${setting.cameraId}`}
+                            type="number"
+                            min="1"
+                            max="3650"
+                            value={draft.days}
+                            disabled={retentionBusyCamera !== undefined}
+                            onChange={(event) =>
+                              setRetentionDrafts((current) => ({
+                                ...current,
+                                [setting.cameraId]: { ...draft, days: Number(event.target.value) },
+                              }))
+                            }
+                          />
+                        </div>
+                        <div>
+                          <label className="form-label" htmlFor={`clip-retention-gb-${setting.cameraId}`}>
+                            {t('clips.retention.quota')}
+                          </label>
+                          <input
+                            className="form-control"
+                            id={`clip-retention-gb-${setting.cameraId}`}
+                            type="number"
+                            min="1"
+                            max="1024"
+                            placeholder={t('clips.retention.unlimited')}
+                            value={draft.gigabytes}
+                            disabled={retentionBusyCamera !== undefined}
+                            onChange={(event) =>
+                              setRetentionDrafts((current) => ({
+                                ...current,
+                                [setting.cameraId]: { ...draft, gigabytes: event.target.value },
+                              }))
+                            }
+                          />
+                        </div>
+                        <button
+                          className="btn btn-secondary"
+                          type="button"
+                          disabled={
+                            retentionBusyCamera !== undefined ||
+                            (draft.days === setting.retentionDays &&
+                              (draft.gigabytes === '' ? null : Number(draft.gigabytes)) ===
+                                setting.maximumStorageGigabytes)
                           }
+                          onClick={() => void updateRetention(setting)}
                         >
-                          {(['always', 'large_motion', 'manual_only', 'never'] as const).map((value) => (
-                            <option key={value} value={value}>
-                              {t(dispatchPolicyKeys[value])}
-                            </option>
-                          ))}
-                        </select>
+                          {retentionBusyCamera === setting.cameraId
+                            ? t('clips.retention.saving')
+                            : t('clips.retention.save')}
+                        </button>
                       </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
+          {(cameraId || dispatchPolicies.length > 0 || policyLoading || policyLoadErrors.length > 0) && (
+            <section className="panel-card" aria-labelledby="clip-policy-title">
+              <h3 id="clip-policy-title" className="h6">
+                {t('clips.policy.title')}
+              </h3>
+              <p className="small text-secondary">{t('clips.policy.description')}</p>
+              {policyLoading && (
+                <p role="status" aria-live="polite">
+                  {t('clips.policy.loading')}
+                </p>
+              )}
+              {policyNotice && (
+                <p
+                  role={policyNotice.error ? 'alert' : 'status'}
+                  aria-live="polite"
+                  className={policyNotice.error ? 'error-text' : undefined}
+                >
+                  {policyNotice.text}
+                </p>
+              )}
+              {policyLoadErrors.length > 0 && (
+                <p role="alert" className="error-text">
+                  {t('clips.policy.unavailable')}
+                </p>
+              )}
+              <ul className="list-unstyled mb-0">
+                {dispatchPolicies.map((setting) => {
+                  const draft = policyDrafts[setting.cameraId] ?? setting.policy;
+                  return (
+                    <li key={setting.cameraId} className="border-top py-3">
+                      <strong>{setting.cameraId}</strong>
+                      <p className="small text-secondary mt-1 mb-2">
+                        {t('clips.policy.current', { policy: t(dispatchPolicyKeys[setting.policy]) })} —{' '}
+                        {t(dispatchPolicyDescriptionKeys[setting.policy])}
+                      </p>
+                      {setting.policy === 'never' && (
+                        <p className="small text-secondary">{t('clips.policy.neverExplanation')}</p>
+                      )}
+                      {setting.canManage && (
+                        <div className="d-flex flex-wrap align-items-end gap-2">
+                          <div className="flex-grow-1">
+                            <label className="form-label" htmlFor={`clip-policy-${setting.cameraId}`}>
+                              {t('clips.policy.label')}
+                            </label>
+                            <select
+                              className="form-select"
+                              id={`clip-policy-${setting.cameraId}`}
+                              value={draft}
+                              disabled={policyBusyCamera !== undefined}
+                              onChange={(event) =>
+                                setPolicyDrafts((current) => ({
+                                  ...current,
+                                  [setting.cameraId]: event.target.value as DispatchPolicy,
+                                }))
+                              }
+                            >
+                              {(['always', 'large_motion', 'manual_only', 'never'] as const).map((value) => (
+                                <option key={value} value={value}>
+                                  {t(dispatchPolicyKeys[value])}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <button
+                            className="btn btn-secondary"
+                            type="button"
+                            disabled={policyBusyCamera !== undefined || draft === setting.policy}
+                            onClick={() => void updateDispatchPolicy(setting)}
+                          >
+                            {policyBusyCamera === setting.cameraId
+                              ? t('clips.policy.saving')
+                              : t('clips.policy.save')}
+                          </button>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
+        </div>
+      )}
+
+      {selected && (
+        <div className="clip-dialog-backdrop">
+          <div
+            className="clip-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="clip-detail-title"
+            onKeyDown={handleDialogKeyDown}
+          >
+            <div className="clip-dialog-header">
+              <div>
+                <span className="eyebrow">{t('clips.detailEyebrow')}</span>
+                <h3 id="clip-detail-title" className="h5 mt-1">
+                  {t('clips.detailTitle')}
+                </h3>
+                <p className="small text-secondary mb-0">
+                  {formatDate(selected.clip.startedAtUtc)} – {formatDate(selected.clip.endedAtUtc)}
+                </p>
+              </div>
+              <button
+                ref={closeButtonRef}
+                className="btn-close"
+                type="button"
+                aria-label={t('clips.close')}
+                onClick={closeDetail}
+              />
+            </div>
+            <div className="clip-dialog-body">
+              {selected.mediaUrl ? (
+                <>
+                  <p className="small text-secondary">{t('clips.captionsUnavailable')}</p>
+                  {/* biome-ignore lint/a11y/useMediaCaption: The clip contract has no caption track; explicitly disclose this limitation. */}
+                  <video
+                    key={`${selected.clip.publicId}-${playbackAttempt}`}
+                    className="clip-video"
+                    controls
+                    preload="metadata"
+                    src={selected.mediaUrl}
+                    onError={() => setPlaybackError(true)}
+                    onLoadedMetadata={() => setPlaybackError(false)}
+                  >
+                    {t('clips.videoFallback')}
+                  </video>
+                  {playbackError && (
+                    <div className="error-text mt-2" role="alert">
+                      <p>{t('clips.playback.error')}</p>
                       <button
-                        className="btn btn-secondary"
+                        className="btn btn-outline-secondary btn-sm"
                         type="button"
-                        disabled={policyBusyCamera !== undefined || draft === setting.policy}
-                        onClick={() => void updateDispatchPolicy(setting)}
+                        onClick={() => {
+                          setPlaybackError(false);
+                          setPlaybackAttempt((current) => current + 1);
+                        }}
                       >
-                        {policyBusyCamera === setting.cameraId
-                          ? t('clips.policy.saving')
-                          : t('clips.policy.save')}
+                        {t('clips.playback.retry')}
                       </button>
                     </div>
                   )}
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      )}
-      <form
-        className="row g-2 align-items-end mb-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void load(1);
-        }}
-      >
-        <div className="col-12 col-sm-6 col-lg-3">
-          <label className="form-label" htmlFor="clips-from">
-            {t('clips.from')}
-          </label>
-          <input
-            className="form-control"
-            id="clips-from"
-            type="date"
-            value={from}
-            onChange={(event) => setFrom(event.target.value)}
-          />
-        </div>
-        <div className="col-12 col-sm-6 col-lg-3">
-          <label className="form-label" htmlFor="clips-to">
-            {t('clips.to')}
-          </label>
-          <input
-            className="form-control"
-            id="clips-to"
-            type="date"
-            value={to}
-            onChange={(event) => setTo(event.target.value)}
-          />
-        </div>
-        <div className="col-12 col-sm-6 col-lg-3">
-          <label className="form-label" htmlFor="clips-state">
-            {t('clips.state.label')}
-          </label>
-          <select
-            className="form-select"
-            id="clips-state"
-            value={state}
-            onChange={(event) => setState(event.target.value)}
-          >
-            <option value="">{t('clips.state.all')}</option>
-            {(['collecting', 'ready', 'failed', 'lost_capacity'] as const).map((item) => (
-              <option key={item} value={item}>
-                {t(`clips.state.${item}`)}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="col-12 col-lg-3">
-          <button className="btn btn-secondary w-100" type="submit" disabled={busy}>
-            {t('clips.filter')}
-          </button>
-        </div>
-      </form>
-      {error && (
-        <p role="alert" className="error-text">
-          {error}
-        </p>
-      )}
-      {busy && (
-        <p role="status" aria-live="polite">
-          {t('clips.loading')}
-        </p>
-      )}
-      {!busy && !error && items.length === 0 && <p role="status">{t('clips.empty')}</p>}
-      {items.length > 0 && (
-        <>
-          <ol className="clip-timeline" aria-label={t('clips.timeline')}>
-            {items.map((clip) => (
-              <li className="clip-timeline-item" key={clip.publicId}>
-                {clip.thumbnailUrl && (
-                  <img src={clip.thumbnailUrl} alt="" loading="lazy" className="clip-thumbnail" />
-                )}
-                <div className="clip-summary">
-                  <strong>{formatDate(clip.startedAtUtc)}</strong>
-                  <span>
-                    {clip.cameraId} · {t(stateKeys[clip.state] ?? 'clips.unknown')} ·{' '}
-                    {t(archiveKeys[clip.archiveStatus] ?? 'clips.unknown')}
-                  </span>
-                  <span>
-                    {t('clips.analysis')}: {t(analysisKeys[clip.analysisStatus] ?? 'clips.unknown')}
-                  </span>
-                  {clip.isPreserved && (
-                    <span className="badge text-bg-warning">{t('clips.preservation.preserved')}</span>
-                  )}
-                </div>
-                <div className="d-flex flex-wrap align-items-start gap-2">
+                </>
+              ) : (
+                <p role="status">{t('clips.mediaUnavailable')}</p>
+              )}
+              <dl className="clip-metadata">
+                <dt>{t('clips.camera')}</dt>
+                <dd>{selected.clip.cameraId}</dd>
+                <dt>{t('clips.mediaState')}</dt>
+                <dd>{t(stateKeys[selected.clip.state] ?? 'clips.unknown')}</dd>
+                <dt>{t('clips.archiveState')}</dt>
+                <dd>{t(archiveKeys[selected.clip.archiveStatus] ?? 'clips.unknown')}</dd>
+                <dt>{t('clips.analysis')}</dt>
+                <dd>{t(analysisKeys[selected.clip.analysisStatus] ?? 'clips.unknown')}</dd>
+                <dt>{t('clips.duration')}</dt>
+                <dd>{formatDuration(selected.clip.startedAtUtc, selected.clip.endedAtUtc)}</dd>
+                <dt>{t('clips.size')}</dt>
+                <dd>{formatSize(selected.clip.sizeBytes)}</dd>
+                <dt>{t('clips.trigger')}</dt>
+                <dd>{selected.clip.triggerReason ?? t('clips.unknown')}</dd>
+                <dt>{t('clips.updated')}</dt>
+                <dd>{formatDate(selected.updatedAtUtc)}</dd>
+              </dl>
+              <div className="clip-dialog-actions">
+                {renderAnalysisAction(selected.clip)}
+                {isAdmin && selected.clip.state === 'ready' && selected.clip.archiveStatus === 'archived' && (
                   <button
-                    className="btn btn-outline-primary"
+                    className="btn btn-outline-secondary"
                     type="button"
-                    onClick={() => void openClip(clip.publicId)}
+                    disabled={preservationBusyClip !== undefined}
+                    onClick={() => void togglePreservation(selected.clip)}
                   >
-                    {t('clips.details')}
+                    {preservationBusyClip === selected.clip.publicId
+                      ? t('clips.preservation.saving')
+                      : t(
+                          selected.clip.isPreserved
+                            ? 'clips.preservation.release'
+                            : 'clips.preservation.preserve',
+                        )}
                   </button>
-                  {renderAnalysisAction(clip)}
-                  {isAdmin && clip.state === 'ready' && clip.archiveStatus === 'archived' && (
-                    <button
-                      className="btn btn-outline-secondary"
-                      type="button"
-                      disabled={preservationBusyClip !== undefined}
-                      onClick={() => void togglePreservation(clip)}
-                    >
-                      {preservationBusyClip === clip.publicId
-                        ? t('clips.preservation.saving')
-                        : t(clip.isPreserved ? 'clips.preservation.release' : 'clips.preservation.preserve')}
-                    </button>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ol>
-          <div className="d-flex align-items-center justify-content-between gap-2 mt-3">
-            <span aria-live="polite">
-              {t('clips.page', { current: page, total: Math.max(1, Math.ceil(total / PAGE_SIZE)) })}
-            </span>
-            <div className="d-flex gap-2">
-              <button
-                className="btn btn-outline-secondary"
-                type="button"
-                disabled={busy || page <= 1}
-                onClick={() => void load(page - 1)}
-              >
-                {t('clips.previous')}
-              </button>
-              <button
-                className="btn btn-outline-secondary"
-                type="button"
-                disabled={busy || page * PAGE_SIZE >= total}
-                onClick={() => void load(page + 1)}
-              >
-                {t('clips.next')}
-              </button>
-            </div>
-          </div>
-        </>
-      )}
-      {selected && (
-        <section className="clip-detail panel-card mt-4" aria-labelledby="clip-detail-title">
-          <h3 id="clip-detail-title" className="h6">
-            {t('clips.detailTitle')}
-          </h3>
-          <p>
-            {formatDate(selected.clip.startedAtUtc)} – {formatDate(selected.clip.endedAtUtc)}
-          </p>
-          <dl className="clip-metadata">
-            <dt>{t('clips.camera')}</dt>
-            <dd>{selected.clip.cameraId}</dd>
-            <dt>{t('clips.mediaState')}</dt>
-            <dd>{t(stateKeys[selected.clip.state] ?? 'clips.unknown')}</dd>
-            <dt>{t('clips.archiveState')}</dt>
-            <dd>{t(archiveKeys[selected.clip.archiveStatus] ?? 'clips.unknown')}</dd>
-            <dt>{t('clips.analysis')}</dt>
-            <dd>{t(analysisKeys[selected.clip.analysisStatus] ?? 'clips.unknown')}</dd>
-            <dt>{t('clips.trigger')}</dt>
-            <dd>{selected.clip.triggerReason ?? t('clips.unknown')}</dd>
-            <dt>{t('clips.updated')}</dt>
-            <dd>{formatDate(selected.updatedAtUtc)}</dd>
-          </dl>
-          {renderAnalysisAction(selected.clip)}
-          {isAdmin && selected.clip.state === 'ready' && selected.clip.archiveStatus === 'archived' && (
-            <div className="mt-2">
-              <button
-                className="btn btn-outline-secondary"
-                type="button"
-                disabled={preservationBusyClip !== undefined}
-                onClick={() => void togglePreservation(selected.clip)}
-              >
-                {preservationBusyClip === selected.clip.publicId
-                  ? t('clips.preservation.saving')
-                  : t(
-                      selected.clip.isPreserved
-                        ? 'clips.preservation.release'
-                        : 'clips.preservation.preserve',
-                    )}
-              </button>
+                )}
+              </div>
               {preservationNotice?.clipId === selected.clip.publicId && (
                 <p
                   role={preservationNotice.error ? 'alert' : 'status'}
@@ -959,41 +1334,8 @@ export function ClipsPanel({ cameraId, isAdmin = false }: { cameraId?: string; i
                 </p>
               )}
             </div>
-          )}
-          {selected.mediaUrl && (
-            <>
-              <p className="small text-secondary">{t('clips.captionsUnavailable')}</p>
-              {/* biome-ignore lint/a11y/useMediaCaption: The clip contract has no caption track; explicitly disclose this limitation. */}
-              <video
-                key={`${selected.clip.publicId}-${playbackAttempt}`}
-                className="clip-video"
-                controls
-                preload="metadata"
-                src={selected.mediaUrl}
-                onError={() => setPlaybackError(true)}
-                onLoadedMetadata={() => setPlaybackError(false)}
-              >
-                {t('clips.videoFallback')}
-              </video>
-              {playbackError && (
-                <div className="error-text mt-2" role="alert">
-                  <p>{t('clips.playback.error')}</p>
-                  <button
-                    className="btn btn-outline-secondary btn-sm"
-                    type="button"
-                    onClick={() => {
-                      setPlaybackError(false);
-                      setPlaybackAttempt((current) => current + 1);
-                    }}
-                  >
-                    {t('clips.playback.retry')}
-                  </button>
-                </div>
-              )}
-            </>
-          )}
-          {!selected.mediaUrl && <p role="status">{t('clips.mediaUnavailable')}</p>}
-        </section>
+          </div>
+        </div>
       )}
     </section>
   );

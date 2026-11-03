@@ -43,13 +43,13 @@ it('renders timeline thumbnails in the bounded thumbnail style', async () => {
     </I18nProvider>,
   );
 
-  await screen.findByRole('button', { name: 'Detalhes e reprodução' });
+  await screen.findByRole('button', { name: /Detalhes e reprodução/ });
   const thumbnail = container.querySelector('img.clip-thumbnail');
   expect(thumbnail).not.toBeNull();
-  if (!thumbnail) throw new Error('Timeline thumbnail was not rendered');
+  if (!thumbnail) throw new Error('Clip thumbnail was not rendered');
   expect(thumbnail).toHaveAttribute('src', '/api/v1/clips/CLP000000000001/thumbnail');
   expect(thumbnail).toHaveClass('clip-thumbnail');
-  expect(thumbnail?.parentElement).toHaveClass('clip-timeline-item');
+  expect(thumbnail?.parentElement).toHaveClass('clip-card-media');
 });
 
 it('lets an administrator configure the selected per-camera trigger with versioned API updates', async () => {
@@ -87,6 +87,7 @@ it('lets an administrator configure the selected per-camera trigger with version
       <ClipsPanel isAdmin />
     </I18nProvider>,
   );
+  await user.click(await screen.findByRole('tab', { name: 'Ajustes' }));
   await user.click(await screen.findByRole('button', { name: 'Ativar gatilho' }));
   expect(
     await screen.findByText('Geração automática de clipes ativada para esta câmera.'),
@@ -110,6 +111,35 @@ it('does not request or expose trigger configuration for non-administrators', as
   );
   expect(await screen.findByText('Nenhum clipe corresponde aos filtros.')).toBeInTheDocument();
   expect(screen.queryByText('Geração automática de clipes')).not.toBeInTheDocument();
+});
+
+it('opens the clip library first and keeps administrator settings in a separate tab', async () => {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const path = String(input);
+    if (path.startsWith('/api/v1/clips?')) return json({ items: [], page: 1, pageSize: 20, total: 0 });
+    if (path.startsWith('/api/v1/admin/cameras?'))
+      return json({ items: [{ cameraId: 'CAM000000000001', name: 'Garage', isEnabled: true }] });
+    if (path.endsWith('/clip-trigger'))
+      return json({ cameraId: 'CAM000000000001', enabled: false, version: 0, updatedAtUtc: null });
+    if (path.endsWith('/clip-retention'))
+      return json({
+        cameraId: 'CAM000000000001',
+        retentionDays: 15,
+        maximumStorageGigabytes: null,
+        version: 0,
+      });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <I18nProvider>
+      <ClipsPanel isAdmin />
+    </I18nProvider>,
+  );
+  expect(await screen.findByText('Nenhum clipe corresponde aos filtros.')).toBeInTheDocument();
+  expect(screen.queryByText('Geração automática de clipes')).not.toBeInTheDocument();
+  await user.click(screen.getByRole('tab', { name: 'Ajustes' }));
+  expect(await screen.findByText('Geração automática de clipes')).toBeInTheDocument();
 });
 
 it('saves per-camera retention settings and preserves a clip through versioned administrator actions', async () => {
@@ -166,6 +196,15 @@ it('saves per-camera retention settings and preserves a clip through versioned a
       clip.preservationVersion++;
       return json({ clipPublicId: clip.publicId, isPreserved: preserved, version: clip.preservationVersion });
     }
+    if (path === `/api/v1/clips/${clip.publicId}` && method === 'GET')
+      return json({
+        clip,
+        mediaUrl: null,
+        mediaSha256: null,
+        thumbnailSha256: null,
+        attemptCount: 0,
+        updatedAtUtc: '2026-10-01T00:00:10Z',
+      });
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
   const user = userEvent.setup();
@@ -174,13 +213,16 @@ it('saves per-camera retention settings and preserves a clip through versioned a
       <ClipsPanel isAdmin />
     </I18nProvider>,
   );
+  await user.click(await screen.findByRole('tab', { name: 'Ajustes' }));
   await user.clear(await screen.findByLabelText('Retenção (dias)'));
   await user.type(screen.getByLabelText('Retenção (dias)'), '30');
   await user.type(screen.getByLabelText('Limite do arquivo (GB)'), '50');
   await user.click(screen.getByRole('button', { name: 'Salvar limites' }));
   expect(await screen.findByText('Configurações de retenção salvas.')).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Preservar clipe' }));
-  expect(await screen.findByText('Preservado')).toBeInTheDocument();
+  await user.click(screen.getByRole('tab', { name: 'Clipes' }));
+  await user.click(await screen.findByRole('button', { name: /Detalhes e reprodução/ }));
+  await user.click(await screen.findByRole('button', { name: 'Preservar clipe' }));
+  expect((await screen.findAllByText('Preservado')).length).toBeGreaterThan(0);
   expect(requests.some((item) => item.method === 'PUT' && item.path.endsWith('/clip-retention'))).toBe(true);
   expect(requests.some((item) => item.method === 'PUT' && item.path.endsWith('/preservation'))).toBe(true);
   expect(preserved).toBe(true);
@@ -242,6 +284,15 @@ it('loads persisted policy, saves it with optimistic version, and submits analys
         },
         202,
       );
+    if (path === `/api/v1/clips/${clip.publicId}` && method === 'GET')
+      return json({
+        clip,
+        mediaUrl: null,
+        mediaSha256: null,
+        thumbnailSha256: null,
+        attemptCount: 0,
+        updatedAtUtc: '2026-10-31T00:00:10Z',
+      });
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
   const user = userEvent.setup();
@@ -250,10 +301,13 @@ it('loads persisted policy, saves it with optimistic version, and submits analys
       <ClipsPanel cameraId={clip.cameraId} />
     </I18nProvider>,
   );
+  await user.click(await screen.findByRole('tab', { name: 'Ajustes' }));
   await user.selectOptions(await screen.findByLabelText('Política'), 'always');
   await user.click(screen.getByRole('button', { name: 'Salvar política' }));
   expect(await screen.findByText('Política da câmera salva.')).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Enviar para análise' }));
+  await user.click(screen.getByRole('tab', { name: 'Clipes' }));
+  await user.click(await screen.findByRole('button', { name: /Detalhes e reprodução/ }));
+  await user.click(await screen.findByRole('button', { name: 'Enviar para análise' }));
   expect(await screen.findByText('Solicitação de análise enviada.')).toBeInTheDocument();
   expect(
     requests.some(
@@ -299,7 +353,7 @@ it('reports an unplayable clip and offers a retry instead of failing silently', 
     </I18nProvider>,
   );
 
-  await user.click(await screen.findByRole('button', { name: 'Detalhes e reprodução' }));
+  await user.click(await screen.findByRole('button', { name: /Detalhes e reprodução/ }));
   const video = await screen.findByText('Seu navegador não consegue reproduzir este formato de vídeo.');
   expect(screen.queryByText(/Não foi possível reproduzir o clipe/)).not.toBeInTheDocument();
 

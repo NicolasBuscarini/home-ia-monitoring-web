@@ -8,9 +8,6 @@ export type DashboardView =
   | 'health'
   | 'dependencies'
   | 'capture'
-  | 'users'
-  | 'profiles'
-  | 'requests'
   | 'cameras'
   | 'people';
 type MenuGroup = 'system' | 'management';
@@ -21,9 +18,6 @@ const viewLabels: Record<DashboardView, TranslationKey> = {
   health: 'dashboard.menu.health',
   dependencies: 'dashboard.menu.dependencies',
   capture: 'dashboard.menu.capture',
-  users: 'dashboard.menu.users',
-  profiles: 'dashboard.menu.profiles',
-  requests: 'dashboard.menu.accessRequests',
   cameras: 'dashboard.menu.cameras',
   people: 'dashboard.menu.people',
 };
@@ -141,7 +135,7 @@ export function DashboardMenu({ active, isAdmin, portalModuleIds, onChange }: Da
             </button>
             {openGroup === 'management' && (
               <div className="dashboard-submenu" id="dashboard-submenu-management">
-                {(['cameras', 'people', 'users', 'profiles', 'requests'] as const).map((view) => (
+                {(['cameras', 'people'] as const).map((view) => (
                   <button
                     key={view}
                     className="dashboard-submenu-item"

@@ -77,21 +77,11 @@ describe('dashboard navigation', () => {
 
     const management = within(menu).getByRole('button', { name: 'Gestão' });
     await userEvent.setup().click(management);
-    expect(within(menu).getByRole('button', { name: 'Usuários' })).toBeInTheDocument();
-    expect(within(menu).getByRole('button', { name: 'Perfis e permissões' })).toBeInTheDocument();
     expect(within(menu).getByRole('button', { name: 'Pessoas' })).toBeInTheDocument();
-    await userEvent.setup().click(within(menu).getByRole('button', { name: 'Usuários' }));
-    expect(await screen.findByRole('heading', { name: 'Gestão de usuários' })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Perfis e permissões' })).not.toBeInTheDocument();
-
-    await userEvent.setup().click(management);
-    await userEvent.setup().click(within(menu).getByRole('button', { name: 'Perfis e permissões' }));
-    expect(await screen.findByRole('heading', { name: 'Perfis e permissões' })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Gestão de usuários' })).not.toBeInTheDocument();
-
-    await userEvent.setup().click(management);
-    await userEvent.setup().click(within(menu).getByRole('button', { name: 'Pedidos de acesso' }));
-    expect(await screen.findByRole('heading', { name: 'Pedidos de acesso' })).toBeInTheDocument();
+    expect(within(menu).getByRole('button', { name: 'Câmeras' })).toBeInTheDocument();
+    expect(within(menu).queryByRole('button', { name: 'Usuários' })).not.toBeInTheDocument();
+    await userEvent.setup().click(within(menu).getByRole('button', { name: 'Câmeras' }));
+    expect(await screen.findByRole('heading', { name: 'Configuração da câmera' })).toBeInTheDocument();
   });
 
   it('presents one camera without adding a redundant selector', () => {
@@ -260,8 +250,10 @@ describe('dashboard navigation', () => {
     renderDashboard('Viewer');
     await userEvent.setup().click(screen.getByRole('button', { name: 'Clipes' }));
     expect(await screen.findByText('Linha do tempo de clipes')).toBeInTheDocument();
-    expect(await screen.findByText(/garage-01 · Pronto · Não arquivado/)).toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Detalhes e reprodução' }));
+    expect(await screen.findByText('garage-01 · 20 B')).toBeInTheDocument();
+    expect(screen.getAllByText('Pronto').some((element) => element.classList.contains('badge'))).toBe(true);
+    expect(screen.getByText('Não arquivado')).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: /Detalhes e reprodução/ }));
     expect(await screen.findByRole('heading', { name: 'Detalhes do clipe' })).toBeInTheDocument();
     expect(screen.getByLabelText('Data inicial (UTC)')).toBeInTheDocument();
     expect(screen.getByLabelText('Data final (UTC)')).toBeInTheDocument();

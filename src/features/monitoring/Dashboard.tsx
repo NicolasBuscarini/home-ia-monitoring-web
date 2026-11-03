@@ -2,11 +2,8 @@ import type { CameraStatus, TranslationKey, UserRole } from 'home-ia-shared';
 import { StatusBadge, useI18n } from 'home-ia-shared';
 import { useEffect, useRef, useState } from 'react';
 import { DashboardMenu, type DashboardView } from '../../components/DashboardMenu';
-import { AdminAccessRequestsPanel } from '../admin/AdminAccessRequestsPanel';
 import { AdminCameraConnectionPanel } from '../admin/AdminCameraConnectionPanel';
 import { AdminPeoplePanel } from '../admin/AdminPeoplePanel';
-import { AdminProfilesPanel } from '../admin/AdminProfilesPanel';
-import { AdminUsersPanel } from '../admin/AdminUsersPanel';
 import { ClipsPanel } from '../clips/ClipsPanel';
 import { OperationsPanel } from '../operations/OperationsPanel';
 import { LivePlayer } from './LivePlayer';
@@ -34,7 +31,6 @@ export function Dashboard({
 }: DashboardProps) {
   const { t } = useI18n();
   const [active, setActive] = useState<DashboardView>('monitor');
-  const [userIdFilter, setUserIdFilter] = useState<string>();
   const [playerStatus, setPlayerStatus] = useState(() => t('player.status.notStarted'));
   const playerAnchorRef = useRef<HTMLDivElement>(null);
   const didAutoScrollRef = useRef(false);
@@ -42,10 +38,6 @@ export function Dashboard({
   const showMonitoring = !portalModuleIds || portalModuleIds.includes('monitoring');
   const showAdministration = !portalModuleIds || portalModuleIds.includes('administration');
   const camera = cameras.find((item) => item.cameraId === selectedCameraId);
-  function manageRequestedUser(userId: string) {
-    setUserIdFilter(userId);
-    setActive('users');
-  }
   useEffect(() => {
     if (!showMonitoring && showAdministration && active === 'monitor') setActive('health');
   }, [showMonitoring, showAdministration, active]);
@@ -159,21 +151,6 @@ export function Dashboard({
             <OperationsPanel camera={camera} view={active} playerStatus={playerStatus} />
           </section>
         )}
-      {showAdministration && isAdmin && active === 'users' && (
-        <section id="view-users" aria-label={t('dashboard.menu.users')}>
-          <AdminUsersPanel initialUserId={userIdFilter} />
-        </section>
-      )}
-      {showAdministration && isAdmin && active === 'profiles' && (
-        <section id="view-profiles" aria-label={t('dashboard.menu.profiles')}>
-          <AdminProfilesPanel />
-        </section>
-      )}
-      {showAdministration && isAdmin && active === 'requests' && (
-        <section id="view-requests" aria-label={t('dashboard.menu.accessRequests')}>
-          <AdminAccessRequestsPanel onManageUser={manageRequestedUser} />
-        </section>
-      )}
       {showAdministration && isAdmin && active === 'people' && (
         <section id="view-people" aria-label={t('dashboard.menu.people')}>
           <AdminPeoplePanel />
