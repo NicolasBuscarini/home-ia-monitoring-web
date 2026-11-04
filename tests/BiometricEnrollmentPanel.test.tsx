@@ -124,6 +124,50 @@ describe('biometric enrollment panel', () => {
     );
   });
 
+  it('links and unlinks an active enrollment to an authorized roster person', async () => {
+    let items: unknown[] = [{ ...enrollment, personPublicId: null }];
+    const requests: Array<{ method: string; body?: string }> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      const method = init?.method ?? 'GET';
+      requests.push({ method, body: init?.body ? String(init.body) : undefined });
+      if (method === 'GET') return response(items);
+      if (method === 'PUT') {
+        items = [{ ...enrollment, personPublicId: 'PER000000000001' }];
+        return response({
+          enrollmentPublicId: enrollment.publicId,
+          personPublicId: 'PER000000000001',
+          linkedAtUtc: '2026-11-04T12:00:00Z',
+        });
+      }
+      if (method === 'DELETE') {
+        items = [{ ...enrollment, personPublicId: null }];
+        return response(null, 204);
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+
+    const user = userEvent.setup();
+    render(
+      <I18nProvider>
+        <BiometricEnrollmentPanel people={[{ publicId: 'PER000000000001', displayName: 'Ana' }]} />
+      </I18nProvider>,
+    );
+
+    expect(await screen.findByText('Sem vínculo com pessoa autorizada.')).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText('Selecione uma pessoa'), 'PER000000000001');
+    await user.click(screen.getByRole('button', { name: 'Vincular' }));
+
+    expect(await screen.findByText('Biometria vinculada à pessoa autorizada.')).toBeInTheDocument();
+    expect(await screen.findByText('Vinculada a Ana')).toBeInTheDocument();
+    const put = requests.find((entry) => entry.method === 'PUT');
+    expect(JSON.parse(put?.body ?? '')).toEqual({ personPublicId: 'PER000000000001' });
+
+    await user.click(screen.getByRole('button', { name: 'Desvincular' }));
+    expect(await screen.findByText('Vínculo com a pessoa autorizada removido.')).toBeInTheDocument();
+    expect(await screen.findByText('Sem vínculo com pessoa autorizada.')).toBeInTheDocument();
+    expect(requests.some((entry) => entry.method === 'DELETE')).toBe(true);
+  });
+
   it('revokes the active enrollment after confirmation', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
       const method = init?.method ?? 'GET';

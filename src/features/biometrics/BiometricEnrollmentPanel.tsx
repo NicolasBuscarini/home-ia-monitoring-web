@@ -22,6 +22,16 @@ interface BiometricEnrollment {
   keyVersion: string;
   consentVersion: string;
   consentAcceptedAtUtc: string;
+  personPublicId: string | null;
+}
+
+interface RosterPersonOption {
+  publicId: string;
+  displayName: string;
+}
+
+interface BiometricEnrollmentPanelProps {
+  people?: RosterPersonOption[];
 }
 
 type SubmitError =
@@ -37,6 +47,7 @@ type SubmitError =
   | 'forbidden'
   | 'submit';
 type LoadError = '' | 'load';
+type LinkError = '' | 'target' | 'forbidden' | 'unavailable' | 'update';
 
 const statusKeys: Record<BiometricEnrollment['status'], TranslationKey> = {
   active: 'biometrics.status.active',
@@ -44,7 +55,7 @@ const statusKeys: Record<BiometricEnrollment['status'], TranslationKey> = {
   expired: 'biometrics.status.expired',
 };
 
-export function BiometricEnrollmentPanel() {
+export function BiometricEnrollmentPanel({ people = [] }: BiometricEnrollmentPanelProps) {
   const { t, locale } = useI18n();
   const fileId = useId();
   const consentId = useId();
@@ -57,6 +68,11 @@ export function BiometricEnrollmentPanel() {
   const [file, setFile] = useState<File>();
   const [busy, setBusy] = useState(false);
   const [revokingId, setRevokingId] = useState<string>();
+  const [linkingId, setLinkingId] = useState<string>();
+  const [unlinkingId, setUnlinkingId] = useState<string>();
+  const [selectedPerson, setSelectedPerson] = useState<Record<string, string>>({});
+  const [linkError, setLinkError] = useState<LinkError>('');
+  const [linkNotice, setLinkNotice] = useState('');
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -140,6 +156,50 @@ export function BiometricEnrollmentPanel() {
     }
   }
 
+  async function link(item: BiometricEnrollment) {
+    const personPublicId = selectedPerson[item.publicId];
+    if (!personPublicId) return;
+    setLinkingId(item.publicId);
+    setLinkError('');
+    setLinkNotice('');
+    try {
+      const response = await request(`/api/v1/admin/biometrics/enrollments/${item.publicId}/person`, {
+        method: 'PUT',
+        body: JSON.stringify({ personPublicId }),
+      });
+      if (!response.ok) throw new ApiError(await errorCode(response), response.status);
+      setLinkNotice(t('biometrics.link.notice.linked'));
+      setSelectedPerson((current) => {
+        const next = { ...current };
+        delete next[item.publicId];
+        return next;
+      });
+      await load();
+    } catch (failure) {
+      setLinkError(linkErrorKind(failure));
+    } finally {
+      setLinkingId(undefined);
+    }
+  }
+
+  async function unlink(item: BiometricEnrollment) {
+    setUnlinkingId(item.publicId);
+    setLinkError('');
+    setLinkNotice('');
+    try {
+      const response = await request(`/api/v1/admin/biometrics/enrollments/${item.publicId}/person`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) throw new ApiError(await errorCode(response), response.status);
+      setLinkNotice(t('biometrics.link.notice.unlinked'));
+      await load();
+    } catch (failure) {
+      setLinkError(linkErrorKind(failure));
+    } finally {
+      setUnlinkingId(undefined);
+    }
+  }
+
   const active = items.filter((item) => item.status === 'active');
   return (
     <section className="panel-card biometrics-panel" aria-labelledby="biometrics-title">
@@ -188,18 +248,102 @@ export function BiometricEnrollmentPanel() {
                 {t('biometrics.item.keyVersion', { version: item.keyVersion })}
               </p>
               {item.status === 'active' && (
-                <button
-                  className="btn btn-outline-light btn-sm"
-                  type="button"
-                  disabled={revokingId === item.publicId}
-                  onClick={() => void revoke(item)}
-                >
-                  {revokingId === item.publicId ? t('biometrics.revoking') : t('biometrics.revoke')}
-                </button>
+                <>
+                  <button
+                    className="btn btn-outline-light btn-sm"
+                    type="button"
+                    disabled={revokingId === item.publicId}
+                    onClick={() => void revoke(item)}
+                  >
+                    {revokingId === item.publicId ? t('biometrics.revoking') : t('biometrics.revoke')}
+                  </button>
+                  <div className="biometrics-link mt-2">
+                    <p className="small text-secondary mb-1">{t('biometrics.link.label')}</p>
+                    {item.personPublicId ? (
+                      <>
+                        <p className="small mb-2">
+                          {t('biometrics.link.linked', {
+                            name:
+                              people.find((person) => person.publicId === item.personPublicId)?.displayName ??
+                              item.personPublicId,
+                          })}
+                        </p>
+                        <button
+                          className="btn btn-outline-light btn-sm"
+                          type="button"
+                          disabled={unlinkingId === item.publicId}
+                          onClick={() => void unlink(item)}
+                        >
+                          {unlinkingId === item.publicId
+                            ? t('biometrics.link.unlinking')
+                            : t('biometrics.link.unlink')}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="small text-secondary mb-2">{t('biometrics.link.none')}</p>
+                        {people.length === 0 ? (
+                          <p className="small text-secondary mb-0">{t('biometrics.link.empty')}</p>
+                        ) : (
+                          <div className="d-flex flex-wrap gap-2 align-items-end">
+                            <div>
+                              <label
+                                className="form-label small mb-1"
+                                htmlFor={`biometrics-person-${item.publicId}`}
+                              >
+                                {t('biometrics.link.choose')}
+                              </label>
+                              <select
+                                id={`biometrics-person-${item.publicId}`}
+                                className="form-select form-select-sm"
+                                value={selectedPerson[item.publicId] ?? ''}
+                                disabled={linkingId === item.publicId}
+                                onChange={(event) => {
+                                  const value = event.currentTarget.value;
+                                  setSelectedPerson((current) => ({
+                                    ...current,
+                                    [item.publicId]: value,
+                                  }));
+                                }}
+                              >
+                                <option value="">{t('biometrics.link.choose')}</option>
+                                {people.map((person) => (
+                                  <option key={person.publicId} value={person.publicId}>
+                                    {person.displayName}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <button
+                              className="btn btn-outline-light btn-sm"
+                              type="button"
+                              disabled={!selectedPerson[item.publicId] || linkingId === item.publicId}
+                              onClick={() => void link(item)}
+                            >
+                              {linkingId === item.publicId
+                                ? t('biometrics.link.linking')
+                                : t('biometrics.link.link')}
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </>
               )}
             </li>
           ))}
         </ul>
+      )}
+      {linkError && (
+        <p className="error-text" role="alert">
+          {t(`biometrics.link.error.${linkError}`)}
+        </p>
+      )}
+      {linkNotice && (
+        <p role="status" aria-live="polite">
+          {linkNotice}
+        </p>
       )}
 
       <form className="biometrics-form mt-3" onSubmit={(event) => void submit(event)}>
@@ -254,6 +398,14 @@ export function BiometricEnrollmentPanel() {
       </form>
     </section>
   );
+}
+
+function linkErrorKind(failure: unknown): LinkError {
+  if (!(failure instanceof ApiError)) return 'update';
+  if (failure.status === 403) return 'forbidden';
+  if (failure.status === 404) return 'target';
+  if (failure.status === 503) return 'unavailable';
+  return 'update';
 }
 
 function submitErrorKind(failure: unknown): SubmitError {

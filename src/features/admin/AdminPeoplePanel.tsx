@@ -453,7 +453,7 @@ export function AdminPeoplePanel() {
       </section>
 
       <div className="mt-3">
-        <BiometricEnrollmentPanel />
+        <BiometricEnrollmentPanel people={roster?.items ?? []} />
       </div>
     </div>
   );
