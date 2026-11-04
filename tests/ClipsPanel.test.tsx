@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { I18nProvider } from 'home-ia-shared';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -11,6 +11,7 @@ function json(body: unknown, status = 200) {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
 });
 
 it('renders timeline thumbnails in the bounded thumbnail style', async () => {
@@ -372,4 +373,53 @@ it('reports an unplayable clip and offers a retry instead of failing silently', 
   await user.click(screen.getByRole('button', { name: 'Tentar novamente' }));
   expect(screen.queryByText(/Não foi possível reproduzir o clipe/)).not.toBeInTheDocument();
   expect(document.querySelector('video')).not.toBe(before);
+});
+
+it('opens the clip selected by the deep link, copies the canonical link and clears it on close', async () => {
+  const clip = {
+    publicId: 'CLP000000000009',
+    cameraId: 'CAM000000000001',
+    startedAtUtc: '2026-10-01T00:00:00Z',
+    endedAtUtc: '2026-10-01T00:00:10Z',
+    state: 'ready',
+    archiveStatus: 'archived',
+    analysisStatus: 'not_requested',
+    thumbnailUrl: null,
+    sizeBytes: 2048,
+    triggerReason: null,
+    triggerConfigVersion: null,
+  };
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const path = String(input);
+    if (path.startsWith('/api/v1/clips?')) return json({ items: [clip], page: 1, pageSize: 20, total: 1 });
+    if (path === `/api/v1/clips/${clip.publicId}`)
+      return json({
+        clip,
+        mediaUrl: null,
+        mediaSha256: null,
+        thumbnailSha256: null,
+        attemptCount: 0,
+        updatedAtUtc: '2026-10-01T00:00:10Z',
+      });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  const onDeepLinkParamsChange = vi.fn();
+
+  render(
+    <I18nProvider>
+      <ClipsPanel deepLinkParams={{ clip: clip.publicId }} onDeepLinkParamsChange={onDeepLinkParamsChange} />
+    </I18nProvider>,
+  );
+
+  const dialog = await screen.findByRole('dialog');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Copiar link' }));
+  expect(writeText).toHaveBeenCalledWith(
+    `${window.location.origin}/?module=monitoring&view=clips&clip=${clip.publicId}`,
+  );
+  expect(await screen.findByText('Link copiado')).toBeInTheDocument();
+
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Fechar' }));
+  expect(onDeepLinkParamsChange).toHaveBeenLastCalledWith({});
 });

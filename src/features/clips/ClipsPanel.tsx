@@ -1,5 +1,5 @@
 import type { TranslationKey } from 'home-ia-shared';
-import { ApiError, getJson, request, useI18n } from 'home-ia-shared';
+import { ApiError, buildDeepLink, getJson, request, useI18n } from 'home-ia-shared';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   useCallback,
@@ -129,10 +129,14 @@ export function ClipsPanel({
   cameraId,
   isAdmin = false,
   view = 'library',
+  deepLinkParams,
+  onDeepLinkParamsChange,
 }: {
   cameraId?: string;
   isAdmin?: boolean;
   view?: 'library' | 'settings';
+  deepLinkParams?: Record<string, string>;
+  onDeepLinkParamsChange?: (params: Record<string, string>) => void;
 }) {
   const { t, locale } = useI18n();
   const [items, setItems] = useState<ClipItem[]>([]);
@@ -174,8 +178,10 @@ export function ClipsPanel({
   }>();
   const [range, setRange] = useState<'all' | 'today' | '7d' | '30d' | 'custom'>('all');
   const [detailLoading, setDetailLoading] = useState<string>();
+  const [linkNotice, setLinkNotice] = useState<{ text: string; error: boolean }>();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const lastFocusRef = useRef<HTMLElement | null>(null);
+  const requestedClipRef = useRef<string | undefined>(undefined);
 
   const loadDispatchPolicies = useCallback(async (cameraIds: string[]) => {
     const ids = [...new Set(cameraIds.filter(Boolean))];
@@ -552,32 +558,68 @@ export function ClipsPanel({
     );
   }
 
-  async function openClip(clipId: string) {
-    lastFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setSelected(undefined);
-    setDetailLoading(clipId);
-    setPlaybackError(false);
-    setPlaybackAttempt(0);
-    setError('');
-    try {
-      setSelected(await getJson<ClipDetails>(`/api/v1/clips/${encodeURIComponent(clipId)}`));
-    } catch (failure) {
-      setError(
-        failure instanceof ApiError && failure.status === 403
-          ? t('clips.error.denied')
-          : t('clips.error.detail'),
-      );
-    } finally {
-      setDetailLoading(undefined);
-    }
-  }
+  const openClip = useCallback(
+    async (clipId: string) => {
+      lastFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setSelected(undefined);
+      setDetailLoading(clipId);
+      setPlaybackError(false);
+      setPlaybackAttempt(0);
+      setError('');
+      try {
+        setSelected(await getJson<ClipDetails>(`/api/v1/clips/${encodeURIComponent(clipId)}`));
+        setLinkNotice(undefined);
+        requestedClipRef.current = clipId;
+        if (deepLinkParams?.clip !== clipId) {
+          onDeepLinkParamsChange?.({ ...(deepLinkParams ?? {}), clip: clipId });
+        }
+      } catch (failure) {
+        setError(
+          failure instanceof ApiError && failure.status === 403
+            ? t('clips.error.denied')
+            : t('clips.error.detail'),
+        );
+      } finally {
+        setDetailLoading(undefined);
+      }
+    },
+    [deepLinkParams, onDeepLinkParamsChange, t],
+  );
 
   const closeDetail = useCallback(() => {
     setSelected(undefined);
     setPlaybackError(false);
     setPlaybackAttempt(0);
+    setLinkNotice(undefined);
+    requestedClipRef.current = undefined;
+    if (deepLinkParams?.clip) {
+      const next = { ...(deepLinkParams ?? {}) };
+      delete next.clip;
+      onDeepLinkParamsChange?.(next);
+    }
     lastFocusRef.current?.focus();
-  }, []);
+  }, [deepLinkParams, onDeepLinkParamsChange]);
+
+  useEffect(() => {
+    const requested = deepLinkParams?.clip;
+    if (!requested || requested === requestedClipRef.current) return;
+    requestedClipRef.current = requested;
+    if (selected?.clip.publicId === requested) return;
+    void openClip(requested);
+    // openClip re-reads the current detail state; the ref guards repeated requests.
+  }, [deepLinkParams?.clip, selected?.clip.publicId, openClip]);
+
+  async function copyClipLink(clipId: string) {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(
+        buildDeepLink(window.location, { module: 'monitoring', view: 'clips', clip: clipId }),
+      );
+      setLinkNotice({ text: t('clips.link.copied'), error: false });
+    } catch {
+      setLinkNotice({ text: t('clips.link.failed'), error: true });
+    }
+  }
 
   useEffect(() => {
     if (!selected) return;
@@ -1200,14 +1242,32 @@ export function ClipsPanel({
                     {formatDate(selected.clip.startedAtUtc)} – {formatDate(selected.clip.endedAtUtc)}
                   </p>
                 </div>
-                <button
-                  ref={closeButtonRef}
-                  className="btn-close"
-                  type="button"
-                  aria-label={t('clips.close')}
-                  onClick={closeDetail}
-                />
+                <div className="d-flex align-items-center gap-2">
+                  <button
+                    className="btn btn-outline-secondary btn-sm"
+                    type="button"
+                    onClick={() => void copyClipLink(selected.clip.publicId)}
+                  >
+                    {t('clips.link.copy')}
+                  </button>
+                  <button
+                    ref={closeButtonRef}
+                    className="btn-close"
+                    type="button"
+                    aria-label={t('clips.close')}
+                    onClick={closeDetail}
+                  />
+                </div>
               </div>
+              {linkNotice && (
+                <p
+                  role={linkNotice.error ? 'alert' : 'status'}
+                  aria-live="polite"
+                  className={linkNotice.error ? 'error-text mb-0 px-3' : 'small text-secondary mb-0 px-3'}
+                >
+                  {linkNotice.text}
+                </p>
+              )}
               <div className="clip-dialog-body">
                 {selected.mediaUrl ? (
                   <>

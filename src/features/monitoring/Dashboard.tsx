@@ -44,6 +44,8 @@ interface DashboardProps {
   userRole: UserRole;
   portalModuleIds?: string[];
   activeView?: string;
+  deepLinkParams?: Record<string, string>;
+  onDeepLinkParamsChange?: (params: Record<string, string>) => void;
 }
 
 export function Dashboard({
@@ -53,6 +55,8 @@ export function Dashboard({
   userRole,
   portalModuleIds,
   activeView,
+  deepLinkParams,
+  onDeepLinkParamsChange,
 }: DashboardProps) {
   const { t } = useI18n();
   const [playerStatus, setPlayerStatus] = useState(() => t('player.status.notStarted'));
@@ -168,12 +172,23 @@ export function Dashboard({
       )}
       {showMonitoring && active === 'clips' && (
         <div id="view-clips">
-          <ClipsPanel cameraId={camera?.cameraId} isAdmin={isAdmin} />
+          <ClipsPanel
+            cameraId={camera?.cameraId}
+            isAdmin={isAdmin}
+            deepLinkParams={deepLinkParams}
+            onDeepLinkParamsChange={onDeepLinkParamsChange}
+          />
         </div>
       )}
       {showMonitoring && active === 'clip-settings' && (
         <section id="view-clip-settings" aria-label={t(viewLabels['clip-settings'])}>
-          <ClipsPanel cameraId={camera?.cameraId} isAdmin={isAdmin} view="settings" />
+          <ClipsPanel
+            cameraId={camera?.cameraId}
+            isAdmin={isAdmin}
+            view="settings"
+            deepLinkParams={deepLinkParams}
+            onDeepLinkParamsChange={onDeepLinkParamsChange}
+          />
         </section>
       )}
       {showAdministration &&

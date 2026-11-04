@@ -9,6 +9,8 @@ export interface MonitoringModuleProps {
   userRole: UserRole;
   portalModuleIds?: string[];
   activeView?: string;
+  deepLinkParams?: Record<string, string>;
+  onDeepLinkParamsChange?: (params: Record<string, string>) => void;
 }
 
 export default function MonitoringModule({
@@ -18,6 +20,8 @@ export default function MonitoringModule({
   userRole,
   portalModuleIds,
   activeView,
+  deepLinkParams,
+  onDeepLinkParamsChange,
 }: MonitoringModuleProps) {
   return (
     <Dashboard
@@ -27,6 +31,8 @@ export default function MonitoringModule({
       userRole={userRole}
       portalModuleIds={portalModuleIds}
       activeView={activeView}
+      deepLinkParams={deepLinkParams}
+      onDeepLinkParamsChange={onDeepLinkParamsChange}
     />
   );
 }
