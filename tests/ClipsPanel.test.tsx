@@ -485,12 +485,16 @@ it('filters clips, loads more without pagination and downloads a selection', asy
 
   await user.type(screen.getByLabelText('ID público'), 'clp000000000001');
   await user.selectOptions(screen.getByLabelText('Análise'), 'performed');
+  await user.selectOptions(screen.getByLabelText('Ordenar por'), 'longest');
+  await user.selectOptions(screen.getByLabelText('Preservação'), 'true');
   await user.type(screen.getByLabelText('Duração mín. (s)'), '5');
   await user.type(screen.getByLabelText('Duração máx. (s)'), '30');
   await user.click(screen.getByRole('button', { name: 'Aplicar filtros' }));
   const filtered = queries.at(-1) ?? '';
   expect(filtered).toContain('publicId=CLP000000000001');
   expect(filtered).toContain('analysis=performed');
+  expect(filtered).toContain('sort=longest');
+  expect(filtered).toContain('preserved=true');
   expect(filtered).toContain('minDurationSeconds=5');
   expect(filtered).toContain('maxDurationSeconds=30');
 
