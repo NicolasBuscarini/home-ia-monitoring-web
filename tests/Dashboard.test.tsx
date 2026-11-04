@@ -257,7 +257,7 @@ describe('dashboard navigation', () => {
     });
     renderDashboard('Viewer', [camera], camera.cameraId, () => {}, 'clips');
     expect(await screen.findByText('Linha do tempo de clipes')).toBeInTheDocument();
-    expect(await screen.findByText('garage-01 · 20 B')).toBeInTheDocument();
+    expect(await screen.findByText('CLP000000000001 · garage-01 · 20 B')).toBeInTheDocument();
     expect(screen.getAllByText('Pronto').some((element) => element.classList.contains('badge'))).toBe(true);
     expect(screen.getByText('Não arquivado')).toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole('button', { name: /Detalhes e reprodução/ }));

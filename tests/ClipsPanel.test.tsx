@@ -423,3 +423,84 @@ it('opens the clip selected by the deep link, copies the canonical link and clea
   await userEvent.click(within(dialog).getByRole('button', { name: 'Fechar' }));
   expect(onDeepLinkParamsChange).toHaveBeenLastCalledWith({});
 });
+it('filters clips, loads more without pagination and downloads a selection', async () => {
+  const clip = (publicId: string, startedAtUtc: string) => ({
+    publicId,
+    cameraId: 'CAM000000000001',
+    startedAtUtc,
+    endedAtUtc: startedAtUtc,
+    state: 'ready',
+    archiveStatus: 'archived',
+    analysisStatus: 'not_requested',
+    thumbnailUrl: null,
+    sizeBytes: 1024,
+    triggerReason: null,
+    triggerConfigVersion: null,
+    isPreserved: false,
+    preservationVersion: 0,
+  });
+  const queries: string[] = [];
+  const downloadRequests: string[] = [];
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const path = String(input);
+    if (path.startsWith('/api/v1/clips/download?')) {
+      downloadRequests.push(path);
+      return new Response(new Blob(['zip']), { status: 200 });
+    }
+    if (path.includes('/clip-analysis-dispatch-policy')) {
+      return new Response('{}', { status: 503 });
+    }
+    if (path.startsWith('/api/v1/clips?')) {
+      queries.push(path);
+      const page = new URL(path, 'http://localhost').searchParams.get('page');
+      return json({
+        items:
+          page === '2'
+            ? [clip('CLP000000000003', '2026-10-30T00:00:00Z')]
+            : [
+                clip('CLP000000000001', '2026-10-31T00:00:00Z'),
+                clip('CLP000000000002', '2026-10-31T00:01:00Z'),
+              ],
+        page: Number(page),
+        pageSize: 2,
+        total: 3,
+      });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:clips') });
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+  const user = userEvent.setup();
+  render(
+    <I18nProvider>
+      <ClipsPanel />
+    </I18nProvider>,
+  );
+  await screen.findByText(/CLP000000000001/);
+  expect(screen.getAllByRole('link', { name: /Baixar clipe/ })[0]).toHaveAttribute(
+    'href',
+    '/api/v1/clips/CLP000000000001/media?download=true',
+  );
+
+  await user.type(screen.getByLabelText('ID público'), 'clp000000000001');
+  await user.selectOptions(screen.getByLabelText('Análise'), 'performed');
+  await user.type(screen.getByLabelText('Duração mín. (s)'), '5');
+  await user.type(screen.getByLabelText('Duração máx. (s)'), '30');
+  await user.click(screen.getByRole('button', { name: 'Aplicar filtros' }));
+  const filtered = queries.at(-1) ?? '';
+  expect(filtered).toContain('publicId=CLP000000000001');
+  expect(filtered).toContain('analysis=performed');
+  expect(filtered).toContain('minDurationSeconds=5');
+  expect(filtered).toContain('maxDurationSeconds=30');
+
+  const firstClipCheckbox = screen.getAllByRole('checkbox', { name: /^Selecionar clipe:/ })[0];
+  if (!firstClipCheckbox) throw new Error('Clip checkbox was not rendered');
+  await user.click(firstClipCheckbox);
+  await user.click(screen.getByRole('button', { name: /Baixar selecionados/ }));
+  expect(downloadRequests).toHaveLength(1);
+  expect(downloadRequests[0]).toContain('ids=CLP000000000001');
+
+  await user.click(screen.getByRole('button', { name: 'Carregar mais' }));
+  expect(await screen.findByText(/CLP000000000003/)).toBeInTheDocument();
+});

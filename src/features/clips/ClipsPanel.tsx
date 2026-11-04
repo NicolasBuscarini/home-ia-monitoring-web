@@ -144,6 +144,15 @@ export function ClipsPanel({
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [state, setState] = useState('');
+  const [publicId, setPublicId] = useState('');
+  const [analysis, setAnalysis] = useState('');
+  const [minDuration, setMinDuration] = useState('');
+  const [maxDuration, setMaxDuration] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState('');
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [selected, setSelected] = useState<ClipDetails>();
@@ -211,22 +220,48 @@ export function ClipsPanel({
   }, []);
 
   const load = useCallback(
-    async (targetPage = 1, overrides?: { from?: string; to?: string; state?: string }) => {
+    async (
+      targetPage = 1,
+      overrides?: {
+        from?: string;
+        to?: string;
+        state?: string;
+        publicId?: string;
+        analysis?: string;
+        minDuration?: string;
+        maxDuration?: string;
+      },
+      append = false,
+    ) => {
       const fromValue = overrides?.from ?? from;
       const toValue = overrides?.to ?? to;
       const stateValue = overrides?.state ?? state;
-      setBusy(true);
+      const publicIdValue = (overrides?.publicId ?? publicId).trim().toUpperCase();
+      const analysisValue = overrides?.analysis ?? analysis;
+      const minDurationValue = overrides?.minDuration ?? minDuration;
+      const maxDurationValue = overrides?.maxDuration ?? maxDuration;
+      if (append) setLoadingMore(true);
+      else setBusy(true);
       setError('');
       try {
         const query = new URLSearchParams({ page: String(targetPage), pageSize: String(PAGE_SIZE) });
         if (cameraId) query.set('cameraId', cameraId);
+        if (publicIdValue) query.set('publicId', publicIdValue);
         if (stateValue) query.set('state', stateValue);
+        if (analysisValue) query.set('analysis', analysisValue);
+        if (minDurationValue) query.set('minDurationSeconds', minDurationValue);
+        if (maxDurationValue) query.set('maxDurationSeconds', maxDurationValue);
         if (fromValue) query.set('fromUtc', new Date(`${fromValue}T00:00:00Z`).toISOString());
         if (toValue) query.set('toUtc', new Date(`${toValue}T23:59:59.999Z`).toISOString());
         const result = await getJson<ClipPage>(`/api/v1/clips?${query}`);
-        setItems(result.items);
+        setItems((current) => {
+          if (!append) return result.items;
+          const seen = new Set(current.map((item) => item.publicId));
+          return [...current, ...result.items.filter((item) => !seen.has(item.publicId))];
+        });
         setTotal(result.total);
         setPage(result.page);
+        setHasMore(result.page * result.pageSize < result.total);
         await loadDispatchPolicies([
           ...(cameraId ? [cameraId] : []),
           ...result.items.map((item) => item.cameraId),
@@ -237,19 +272,78 @@ export function ClipsPanel({
             ? t('clips.error.denied')
             : t('clips.error.load'),
         );
-        setItems([]);
-        setTotal(0);
+        if (!append) {
+          setItems([]);
+          setTotal(0);
+          setHasMore(false);
+        }
       } finally {
-        setBusy(false);
+        if (append) setLoadingMore(false);
+        else setBusy(false);
       }
     },
-    [cameraId, from, loadDispatchPolicies, state, t, to],
+    [analysis, cameraId, from, loadDispatchPolicies, maxDuration, minDuration, publicId, state, t, to],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: initial load; filters reload explicitly.
   useEffect(() => {
     setSelected(undefined);
+    setSelectedIds(new Set());
     void load(1);
-  }, [load]);
+  }, [cameraId]);
+
+  function toggleSelection(publicIdValue: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(publicIdValue)) next.delete(publicIdValue);
+      else next.add(publicIdValue);
+      return next;
+    });
+  }
+
+  function toggleAllLoaded() {
+    setSelectedIds((current) =>
+      current.size === items.length ? new Set() : new Set(items.map((item) => item.publicId)),
+    );
+  }
+
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node || !hasMore || loadingMore || busy || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void load(page + 1, undefined, true);
+      },
+      { rootMargin: '200px' },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [busy, hasMore, load, loadingMore, page]);
+
+  async function downloadSelected() {
+    if (selectedIds.size === 0) return;
+    setDownloading(true);
+    setDownloadError('');
+    try {
+      const response = await fetch(
+        `/api/v1/clips/download?ids=${encodeURIComponent([...selectedIds].join(','))}`,
+        { credentials: 'same-origin' },
+      );
+      if (!response.ok) throw new Error(String(response.status));
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'clips.zip';
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch {
+      setDownloadError(t('clips.download.error'));
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   const loadTriggerConfigurations = useCallback(async () => {
     if (!isAdmin) return;
@@ -719,7 +813,19 @@ export function ClipsPanel({
     setFrom('');
     setTo('');
     setState('');
-    void load(1, { from: '', to: '', state: '' });
+    setPublicId('');
+    setAnalysis('');
+    setMinDuration('');
+    setMaxDuration('');
+    void load(1, {
+      from: '',
+      to: '',
+      state: '',
+      publicId: '',
+      analysis: '',
+      minDuration: '',
+      maxDuration: '',
+    });
   }
 
   function mediaBadgeClass(value: string) {
@@ -788,6 +894,63 @@ export function ClipsPanel({
                 </button>
               ))}
             </fieldset>
+            <div className="row g-2 align-items-end">
+              <div className="col-12 col-sm-6 col-lg-3">
+                <label className="form-label" htmlFor="clips-public-id">
+                  {t('clips.filter.publicId')}
+                </label>
+                <input
+                  className="form-control"
+                  id="clips-public-id"
+                  value={publicId}
+                  placeholder={t('clips.filter.publicIdPlaceholder')}
+                  onChange={(event) => setPublicId(event.target.value)}
+                />
+              </div>
+              <div className="col-12 col-sm-6 col-lg-2">
+                <label className="form-label" htmlFor="clips-analysis">
+                  {t('clips.filter.analysis')}
+                </label>
+                <select
+                  className="form-select"
+                  id="clips-analysis"
+                  value={analysis}
+                  onChange={(event) => setAnalysis(event.target.value)}
+                >
+                  <option value="">{t('clips.filter.analysisAny')}</option>
+                  <option value="performed">{t('clips.filter.analysisPerformed')}</option>
+                  <option value="not_performed">{t('clips.filter.analysisNotPerformed')}</option>
+                </select>
+              </div>
+              <div className="col-12 col-sm-6 col-lg-2">
+                <label className="form-label" htmlFor="clips-min-duration">
+                  {t('clips.filter.minDuration')}
+                </label>
+                <input
+                  className="form-control"
+                  id="clips-min-duration"
+                  type="number"
+                  min="0"
+                  max="86400"
+                  value={minDuration}
+                  onChange={(event) => setMinDuration(event.target.value)}
+                />
+              </div>
+              <div className="col-12 col-sm-6 col-lg-2">
+                <label className="form-label" htmlFor="clips-max-duration">
+                  {t('clips.filter.maxDuration')}
+                </label>
+                <input
+                  className="form-control"
+                  id="clips-max-duration"
+                  type="number"
+                  min="0"
+                  max="86400"
+                  value={maxDuration}
+                  onChange={(event) => setMaxDuration(event.target.value)}
+                />
+              </div>
+            </div>
             <div className="row g-2 align-items-end">
               <div className="col-12 col-sm-6 col-lg-3">
                 <label className="form-label" htmlFor="clips-from">
@@ -862,6 +1025,35 @@ export function ClipsPanel({
             )}
           </div>
 
+          {items.length > 0 && (
+            <div className="clips-selection-bar">
+              <label className="form-check-label small">
+                <input
+                  className="form-check-input me-2"
+                  type="checkbox"
+                  checked={selectedIds.size === items.length}
+                  onChange={toggleAllLoaded}
+                />
+                {t('clips.selectAll')}
+              </label>
+              <button
+                className="btn btn-outline-secondary btn-sm"
+                type="button"
+                disabled={selectedIds.size === 0 || downloading}
+                onClick={() => void downloadSelected()}
+              >
+                {downloading
+                  ? t('clips.downloading')
+                  : t('clips.downloadSelected', { count: selectedIds.size })}
+              </button>
+              {downloadError && (
+                <span className="error-text" role="alert">
+                  {downloadError}
+                </span>
+              )}
+            </div>
+          )}
+
           {error && (
             <div className="error-text" role="alert">
               <p>{error}</p>
@@ -899,6 +1091,14 @@ export function ClipsPanel({
                     <ul className="clip-card-grid" aria-label={t('clips.timeline')}>
                       {clips.map((clip) => (
                         <li className="clip-card" key={clip.publicId}>
+                          <label className="clip-card-select">
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(clip.publicId)}
+                              onChange={() => toggleSelection(clip.publicId)}
+                              aria-label={`${t('clips.selectClip')}: ${formatDate(clip.startedAtUtc)}`}
+                            />
+                          </label>
                           <button
                             className="clip-card-open"
                             type="button"
@@ -931,7 +1131,7 @@ export function ClipsPanel({
                                 {formatTime(clip.startedAtUtc)} – {formatTime(clip.endedAtUtc)}
                               </span>
                               <span className="clip-card-meta">
-                                {clip.cameraId} · {formatSize(clip.sizeBytes)}
+                                {clip.publicId} · {clip.cameraId} · {formatSize(clip.sizeBytes)}
                               </span>
                               <span className="clip-card-badges">
                                 <span className={`badge ${mediaBadgeClass(clip.state)}`}>
@@ -954,34 +1154,33 @@ export function ClipsPanel({
                               </span>
                             </span>
                           </button>
+                          <a
+                            className="clip-card-download"
+                            href={`/api/v1/clips/${clip.publicId}/media?download=true`}
+                            download
+                            aria-label={`${t('clips.downloadClip')}: ${formatDate(clip.startedAtUtc)}`}
+                          >
+                            ↓
+                          </a>
                         </li>
                       ))}
                     </ul>
                   </section>
                 ))}
               </div>
-              <div className="clips-pagination">
-                <span aria-live="polite">
-                  {t('clips.page', { current: page, total: Math.max(1, Math.ceil(total / PAGE_SIZE)) })}
-                </span>
-                <div className="d-flex gap-2">
+              <div className="clips-load-more">
+                <span aria-live="polite">{t('clips.loadedCount', { loaded: items.length, total })}</span>
+                {hasMore && (
                   <button
                     className="btn btn-outline-secondary btn-sm"
                     type="button"
-                    disabled={busy || page <= 1}
-                    onClick={() => void load(page - 1)}
+                    disabled={loadingMore}
+                    onClick={() => void load(page + 1, undefined, true)}
                   >
-                    {t('clips.previous')}
+                    {loadingMore ? t('clips.loadingMore') : t('clips.loadMore')}
                   </button>
-                  <button
-                    className="btn btn-outline-secondary btn-sm"
-                    type="button"
-                    disabled={busy || page * PAGE_SIZE >= total}
-                    onClick={() => void load(page + 1)}
-                  >
-                    {t('clips.next')}
-                  </button>
-                </div>
+                )}
+                <div ref={sentinelRef} aria-hidden="true" className="clips-sentinel" />
               </div>
             </>
           )}
@@ -1323,6 +1522,13 @@ export function ClipsPanel({
                   <dd>{formatDate(selected.updatedAtUtc)}</dd>
                 </dl>
                 <div className="clip-dialog-actions">
+                  <a
+                    className="btn btn-outline-secondary"
+                    href={`/api/v1/clips/${selected.clip.publicId}/media?download=true`}
+                    download
+                  >
+                    {t('clips.download')}
+                  </a>
                   {renderAnalysisAction(selected.clip)}
                   {isAdmin &&
                     selected.clip.state === 'ready' &&
