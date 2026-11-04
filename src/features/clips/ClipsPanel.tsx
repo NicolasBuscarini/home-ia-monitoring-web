@@ -154,7 +154,9 @@ export function ClipsPanel({
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [from, setFrom] = useState('');
+  const [fromTime, setFromTime] = useState('');
   const [to, setTo] = useState('');
+  const [toTime, setToTime] = useState('');
   const [selected, setSelected] = useState<ClipDetails>();
   const [playbackError, setPlaybackError] = useState(false);
   const [playbackAttempt, setPlaybackAttempt] = useState(0);
@@ -224,7 +226,9 @@ export function ClipsPanel({
       targetPage = 1,
       overrides?: {
         from?: string;
+        fromTime?: string;
         to?: string;
+        toTime?: string;
         state?: string;
         publicId?: string;
         analysis?: string;
@@ -234,14 +238,19 @@ export function ClipsPanel({
       append = false,
     ) => {
       const fromValue = overrides?.from ?? from;
+      const fromTimeValue = overrides?.fromTime ?? fromTime;
       const toValue = overrides?.to ?? to;
+      const toTimeValue = overrides?.toTime ?? toTime;
       const stateValue = overrides?.state ?? state;
       const publicIdValue = (overrides?.publicId ?? publicId).trim().toUpperCase();
       const analysisValue = overrides?.analysis ?? analysis;
       const minDurationValue = overrides?.minDuration ?? minDuration;
       const maxDurationValue = overrides?.maxDuration ?? maxDuration;
       if (append) setLoadingMore(true);
-      else setBusy(true);
+      else {
+        setBusy(true);
+        setSelectedIds(new Set());
+      }
       setError('');
       try {
         const query = new URLSearchParams({ page: String(targetPage), pageSize: String(PAGE_SIZE) });
@@ -251,8 +260,10 @@ export function ClipsPanel({
         if (analysisValue) query.set('analysis', analysisValue);
         if (minDurationValue) query.set('minDurationSeconds', minDurationValue);
         if (maxDurationValue) query.set('maxDurationSeconds', maxDurationValue);
-        if (fromValue) query.set('fromUtc', new Date(`${fromValue}T00:00:00Z`).toISOString());
-        if (toValue) query.set('toUtc', new Date(`${toValue}T23:59:59.999Z`).toISOString());
+        if (fromValue)
+          query.set('fromUtc', new Date(`${fromValue}T${fromTimeValue || '00:00'}:00Z`).toISOString());
+        if (toValue)
+          query.set('toUtc', new Date(`${toValue}T${toTimeValue || '23:59'}:59.999Z`).toISOString());
         const result = await getJson<ClipPage>(`/api/v1/clips?${query}`);
         setItems((current) => {
           if (!append) return result.items;
@@ -282,7 +293,20 @@ export function ClipsPanel({
         else setBusy(false);
       }
     },
-    [analysis, cameraId, from, loadDispatchPolicies, maxDuration, minDuration, publicId, state, t, to],
+    [
+      analysis,
+      cameraId,
+      from,
+      fromTime,
+      loadDispatchPolicies,
+      maxDuration,
+      minDuration,
+      publicId,
+      state,
+      t,
+      to,
+      toTime,
+    ],
   );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: initial load; filters reload explicitly.
@@ -804,14 +828,18 @@ export function ClipsPanel({
     }
     setRange(value);
     setFrom(fromValue);
+    setFromTime('');
     setTo(toValue);
+    setToTime('');
     void load(1, { from: fromValue, to: toValue });
   }
 
   function clearFilters() {
     setRange('all');
     setFrom('');
+    setFromTime('');
     setTo('');
+    setToTime('');
     setState('');
     setPublicId('');
     setAnalysis('');
@@ -819,7 +847,9 @@ export function ClipsPanel({
     setMaxDuration('');
     void load(1, {
       from: '',
+      fromTime: '',
       to: '',
+      toTime: '',
       state: '',
       publicId: '',
       analysis: '',
@@ -1004,6 +1034,32 @@ export function ClipsPanel({
                 <button className="btn btn-secondary w-100" type="submit" disabled={busy}>
                   {t('clips.filter')}
                 </button>
+              </div>
+            </div>
+            <div className="row g-2 align-items-end">
+              <div className="col-6 col-lg-3">
+                <label className="form-label" htmlFor="clips-from-time">
+                  {t('clips.filter.fromTime')}
+                </label>
+                <input
+                  className="form-control"
+                  id="clips-from-time"
+                  type="time"
+                  value={fromTime}
+                  onChange={(event) => setFromTime(event.target.value)}
+                />
+              </div>
+              <div className="col-6 col-lg-3">
+                <label className="form-label" htmlFor="clips-to-time">
+                  {t('clips.filter.toTime')}
+                </label>
+                <input
+                  className="form-control"
+                  id="clips-to-time"
+                  type="time"
+                  value={toTime}
+                  onChange={(event) => setToTime(event.target.value)}
+                />
               </div>
             </div>
             {(from || to || state) && (
