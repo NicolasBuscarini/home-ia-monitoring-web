@@ -70,6 +70,7 @@ const analysisKeys: Record<string, TranslationKey> = {
   analysis_pending: 'clips.analysisState.analysis_pending',
   processing: 'clips.analysisState.processing',
   retry_wait: 'clips.analysisState.retry_wait',
+  unavailable: 'clips.analysisState.unavailable',
   failed: 'clips.analysisState.failed',
 };
 interface TriggerConfiguration {
