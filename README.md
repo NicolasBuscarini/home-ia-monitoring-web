@@ -26,7 +26,7 @@ A partir da raiz do repositório de contexto:
 
 O Compose fixa Node por digest; `npm ci`, Biome, Vitest e build Vite rodam no container. O build gera `remoteEntry.js` e o exposto `MonitoringModule`.
 
-O remote contém o código canônico de monitoramento (dashboard, player HLS, clipes, painéis administrativos e operações). i18n, tema, HTTP, tipos, StatusBadge e CSS global vêm de `home-ia-shared`, compartilhado como singleton; não há cópia local desses módulos. O shell carrega o CSS global e o remote usa as mesmas classes.
+O remote contém o código canônico de monitoramento (dashboard, player HLS, clipes, painéis administrativos, triagem de identidade e operações). A triagem em Gestão→Pessoas lista observações minimizadas, candidatos e histórico, e permite confirmar, rejeitar, marcar inconclusivo ou associar pessoa ativa; a decisão é sempre autorizada pela API e nunca renderiza imagem, recorte ou embedding. i18n, tema, HTTP, tipos, StatusBadge e CSS global vêm de `home-ia-shared`, compartilhado como singleton; não há cópia local desses módulos. O shell carrega o CSS global e o remote usa as mesmas classes.
 
 ## Limites
 

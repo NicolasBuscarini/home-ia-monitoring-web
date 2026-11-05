@@ -74,6 +74,8 @@ describe('people management', () => {
           sampleCollectionEnabled: false,
         });
       if (path === '/api/v1/biometrics/enrollments') return response([]);
+      if (path.startsWith('/api/v1/admin/identity-observations'))
+        return response({ items: [], page: 1, pageSize: 25, total: 0 });
       throw new Error(`Unexpected request: ${method} ${path}`);
     });
     const user = userEvent.setup();
@@ -138,6 +140,8 @@ describe('people management', () => {
           sampleCollectionEnabled: false,
         });
       }
+      if (path.startsWith('/api/v1/admin/identity-observations'))
+        return response({ items: [], page: 1, pageSize: 25, total: 0 });
       throw new Error(`Unexpected request: ${method} ${path}`);
     });
     const user = userEvent.setup();

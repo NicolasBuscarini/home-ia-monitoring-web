@@ -1,6 +1,7 @@
 import { ApiError, getJson, request, useI18n } from 'home-ia-shared';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { BiometricEnrollmentPanel } from '../biometrics/BiometricEnrollmentPanel';
+import { IdentityTriagePanel } from '../identity/IdentityTriagePanel';
 
 interface KnownPerson {
   publicId: string;
@@ -455,6 +456,8 @@ export function AdminPeoplePanel() {
       <div className="mt-3">
         <BiometricEnrollmentPanel people={roster?.items ?? []} />
       </div>
+
+      <IdentityTriagePanel />
     </div>
   );
 }
