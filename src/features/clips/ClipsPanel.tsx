@@ -9,6 +9,7 @@ import {
   useState,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { emitClipDownload } from './clipEvents';
 
 interface ClipItem {
   publicId: string;
@@ -371,6 +372,7 @@ export function ClipsPanel({
       anchor.href = url;
       anchor.download = 'clips.zip';
       anchor.click();
+      emitClipDownload();
       setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch {
       setDownloadError(t('clips.download.error'));

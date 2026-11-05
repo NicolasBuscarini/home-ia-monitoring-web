@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { I18nProvider } from 'home-ia-shared';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -441,8 +441,13 @@ it('filters clips, loads more without pagination and downloads a selection', asy
   });
   const queries: string[] = [];
   const downloadRequests: string[] = [];
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+  const eventBodies: string[] = [];
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const path = String(input);
+    if (path === '/api/v1/events') {
+      eventBodies.push(String(init?.body ?? ''));
+      return new Response(null, { status: 201 });
+    }
     if (path.startsWith('/api/v1/clips/download?')) {
       downloadRequests.push(path);
       return new Response(new Blob(['zip']), { status: 200 });
@@ -504,6 +509,13 @@ it('filters clips, loads more without pagination and downloads a selection', asy
   await user.click(screen.getByRole('button', { name: /Baixar selecionados/ }));
   expect(downloadRequests).toHaveLength(1);
   expect(downloadRequests[0]).toContain('ids=CLP000000000001');
+  await waitFor(() => expect(eventBodies).toHaveLength(1));
+  const event = JSON.parse(eventBodies[0] ?? '{}') as {
+    eventType: string;
+    metadata?: { action?: string };
+  };
+  expect(event.eventType).toBe('ui.action');
+  expect(event.metadata?.action).toBe('clip.download');
 
   await user.click(screen.getByRole('button', { name: 'Carregar mais' }));
   expect(await screen.findByText(/CLP000000000003/)).toBeInTheDocument();

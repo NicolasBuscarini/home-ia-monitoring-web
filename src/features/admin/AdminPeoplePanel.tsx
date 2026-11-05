@@ -1,6 +1,7 @@
 import { ApiError, getJson, request, useI18n } from 'home-ia-shared';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { BiometricEnrollmentPanel } from '../biometrics/BiometricEnrollmentPanel';
+import { IdentityCalibrationPanel } from '../identity/IdentityCalibrationPanel';
 import { IdentityTriagePanel } from '../identity/IdentityTriagePanel';
 
 interface KnownPerson {
@@ -458,6 +459,7 @@ export function AdminPeoplePanel() {
       </div>
 
       <IdentityTriagePanel />
+      <IdentityCalibrationPanel />
     </div>
   );
 }

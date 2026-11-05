@@ -25,7 +25,7 @@ interface GatewayText {
   values?: TranslationValues;
 }
 
-function captureState(state: string | undefined): HealthItem {
+export function captureState(state: string | undefined): HealthItem {
   const labels: Record<string, [TranslationKey, State]> = {
     capturing: ['capture.state.capturing', 'healthy'],
     connecting: ['capture.state.connecting', 'pending'],
@@ -33,6 +33,8 @@ function captureState(state: string | undefined): HealthItem {
     reconnecting: ['capture.state.reconnecting', 'degraded'],
     'spool-unavailable': ['capture.state.spoolUnavailable', 'failed'],
     stopped: ['capture.state.stopped', 'failed'],
+    disabled: ['capture.state.disabled', 'pending'],
+    unreachable: ['capture.state.unreachable', 'failed'],
   };
   const item = labels[state ?? ''];
   return item ? { key: item[0], state: item[1] } : { key: 'operations.state.unknown', state: 'neutral' };
