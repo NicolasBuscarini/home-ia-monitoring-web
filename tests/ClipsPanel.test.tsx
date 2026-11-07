@@ -11,6 +11,7 @@ function json(body: unknown, status = 200) {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
 });
 
@@ -25,7 +26,7 @@ it('renders timeline thumbnails in the bounded thumbnail style', async () => {
           endedAtUtc: '2026-10-31T00:00:10Z',
           state: 'ready',
           archiveStatus: 'not_requested',
-          analysisStatus: 'not_requested',
+          analysisStatus: 'completed',
           thumbnailUrl: '/api/v1/clips/CLP000000000001/thumbnail',
           sizeBytes: 1024,
           triggerReason: null,
@@ -51,6 +52,7 @@ it('renders timeline thumbnails in the bounded thumbnail style', async () => {
   expect(thumbnail).toHaveAttribute('src', '/api/v1/clips/CLP000000000001/thumbnail');
   expect(thumbnail).toHaveClass('clip-thumbnail');
   expect(thumbnail?.parentElement).toHaveClass('clip-card-media');
+  expect(screen.getByText(/Concluída/)).toBeInTheDocument();
 });
 
 it('lets an administrator configure the selected per-camera trigger with versioned API updates', async () => {
@@ -235,7 +237,7 @@ it('saves per-camera retention settings and preserves a clip through versioned a
   expect(preserved).toBe(true);
 });
 
-it('loads persisted policy, saves it with optimistic version, and submits analysis by public clip id', async () => {
+it('saves the clip analysis policy in clip rules and submits analysis from the clip detail', async () => {
   const clip = {
     publicId: 'CLP000000000001',
     cameraId: 'CAM000000000001',
@@ -280,6 +282,10 @@ it('loads persisted policy, saves it with optimistic version, and submits analys
         updatedAtUtc: null,
       });
     }
+    if (path === '/api/v1/clips/delete' && method === 'POST') {
+      const body = JSON.parse(String(init?.body));
+      return json({ deleted: body.clipIds, failed: [] });
+    }
     if (path === `/api/v1/clips/${clip.publicId}/analysis-requests` && method === 'POST')
       return json(
         {
@@ -313,10 +319,11 @@ it('loads persisted policy, saves it with optimistic version, and submits analys
   expect(await screen.findByText('Política da câmera salva.')).toBeInTheDocument();
   view.rerender(
     <I18nProvider>
-      <ClipsPanel cameraId={clip.cameraId} />
+      <ClipsPanel cameraId={clip.cameraId} isAdmin />
     </I18nProvider>,
   );
   await user.click(await screen.findByRole('button', { name: /Detalhes e reprodução/ }));
+  expect(screen.queryByLabelText('Política')).not.toBeInTheDocument();
   await user.click(await screen.findByRole('button', { name: 'Enviar para análise' }));
   expect(await screen.findByText('Solicitação de análise enviada.')).toBeInTheDocument();
   expect(
@@ -326,6 +333,65 @@ it('loads persisted policy, saves it with optimistic version, and submits analys
   ).toBe(true);
   const postBody = JSON.parse(requests.find((item) => item.method === 'POST')?.body ?? '{}');
   expect(postBody.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/i);
+  await user.click(screen.getByRole('button', { name: 'Excluir clipe' }));
+  await user.click(screen.getByRole('button', { name: 'Confirmar exclusão' }));
+  expect(await screen.findByText('1 clipe(s) excluído(s).')).toBeInTheDocument();
+  expect(
+    requests.some(
+      (item) =>
+        item.method === 'POST' &&
+        item.path === '/api/v1/clips/delete' &&
+        JSON.parse(item.body ?? '{}').clipIds[0] === clip.publicId,
+    ),
+  ).toBe(true);
+});
+
+it('lets only an administrator delete every eligible clip including unloaded ones', async () => {
+  const requests: Array<{ path: string; method: string }> = [];
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const path = String(input);
+    const method = init?.method ?? 'GET';
+    requests.push({ path, method });
+    if (path.startsWith('/api/v1/clips?')) return json({ items: [], page: 1, pageSize: 20, total: 0 });
+    if (path === '/api/v1/clips/delete-all' && method === 'POST')
+      return json({
+        deleted: 12,
+        skippedPreserved: 2,
+        skippedArchived: 1,
+        skippedNotReady: 3,
+        skippedActiveAnalysis: 4,
+        failed: 0,
+      });
+    throw new Error(`Unexpected request: ${method} ${path}`);
+  });
+  const user = userEvent.setup();
+  const view = render(
+    <I18nProvider>
+      <ClipsPanel isAdmin />
+    </I18nProvider>,
+  );
+
+  await user.click(await screen.findByRole('button', { name: 'Excluir todos os clipes' }));
+  expect(
+    screen.getByText(/Excluir todos os clipes elegíveis, inclusive os que não estão carregados/),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Confirmar exclusão' }));
+
+  expect(
+    await screen.findByText(
+      '12 excluído(s); 10 mantido(s) (preservados: 2, arquivados: 1, incompletos: 3, em análise: 4); 0 falha(s).',
+    ),
+  ).toBeInTheDocument();
+  expect(requests.some((item) => item.method === 'POST' && item.path === '/api/v1/clips/delete-all')).toBe(
+    true,
+  );
+
+  view.rerender(
+    <I18nProvider>
+      <ClipsPanel />
+    </I18nProvider>,
+  );
+  expect(screen.queryByRole('button', { name: 'Excluir todos os clipes' })).not.toBeInTheDocument();
 });
 
 it('reports an unplayable clip and offers a retry instead of failing silently', async () => {
@@ -423,6 +489,42 @@ it('opens the clip selected by the deep link, copies the canonical link and clea
   await userEvent.click(within(dialog).getByRole('button', { name: 'Fechar' }));
   expect(onDeepLinkParamsChange).toHaveBeenLastCalledWith({});
 });
+it('starts with advanced filters collapsed on mobile and exposes the active count', async () => {
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn().mockReturnValue({
+      matches: true,
+      media: '(max-width: 767.98px)',
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }),
+  );
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ items: [], page: 1, pageSize: 20, total: 0 }));
+  const user = userEvent.setup();
+  render(
+    <I18nProvider>
+      <ClipsPanel />
+    </I18nProvider>,
+  );
+
+  const toggle = await screen.findByRole('button', { name: /Filtros avançados/ });
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  expect(document.getElementById('clips-advanced-filters')).toHaveAttribute('data-collapsed', 'true');
+  expect(screen.getByRole('button', { name: 'Hoje' })).toBeInTheDocument();
+
+  await user.click(toggle);
+  expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  expect(document.getElementById('clips-advanced-filters')).toHaveAttribute('data-collapsed', 'false');
+  await user.type(screen.getByLabelText('ID público'), 'CLP000000000001');
+  await user.click(toggle);
+  expect(document.getElementById('clips-advanced-filters')).toHaveAttribute('data-collapsed', 'true');
+  expect(within(toggle).getByText('1')).toBeInTheDocument();
+});
+
 it('filters clips, loads more without pagination and downloads a selection', async () => {
   const clip = (publicId: string, startedAtUtc: string) => ({
     publicId,
@@ -519,4 +621,78 @@ it('filters clips, loads more without pagination and downloads a selection', asy
 
   await user.click(screen.getByRole('button', { name: 'Carregar mais' }));
   expect(await screen.findByText(/CLP000000000003/)).toBeInTheDocument();
+});
+
+it('sends the selected analysis state filter to the clips query', async () => {
+  const requested: string[] = [];
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    requested.push(String(input));
+    return json({ items: [], page: 1, pageSize: 20, total: 0 });
+  });
+
+  render(
+    <I18nProvider>
+      <ClipsPanel />
+    </I18nProvider>,
+  );
+
+  const user = userEvent.setup();
+  const analysisFilter = await screen.findByLabelText('Análise');
+  await user.selectOptions(analysisFilter, 'completed');
+  await user.click(screen.getByRole('button', { name: 'Aplicar filtros' }));
+
+  await waitFor(() => expect(requested.some((path) => path.includes('analysis=completed'))).toBe(true));
+});
+
+it('shows the stored analysis result for a completed clip', async () => {
+  const clip = {
+    publicId: 'CLP000000000009',
+    cameraId: 'CAM000000000001',
+    startedAtUtc: '2026-11-07T19:20:00Z',
+    endedAtUtc: '2026-11-07T19:20:46Z',
+    state: 'ready',
+    archiveStatus: 'not_requested',
+    analysisStatus: 'completed',
+    thumbnailUrl: null,
+    sizeBytes: 1024,
+    triggerReason: 'visual_change:abc',
+    triggerConfigVersion: 'trigger-v1',
+    isPreserved: false,
+    preservationVersion: 0,
+  };
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === '/api/v1/clips/CLP000000000009/analysis-result')
+      return json({
+        clipPublicId: 'CLP000000000009',
+        analysisVersion: 'analysis-v1',
+        modelVersion: 'yolox-nano-0.1.1rc0',
+        framesAnalyzed: 12,
+        processedAtUtc: '2026-11-07T19:20:52Z',
+        objects: [{ className: 'person', classId: 0, score: 0.87, frameIndex: 3 }],
+      });
+    if (path === '/api/v1/clips/CLP000000000009')
+      return json({
+        clip,
+        mediaUrl: null,
+        mediaSha256: null,
+        thumbnailSha256: null,
+        attemptCount: 0,
+        updatedAtUtc: '2026-11-07T19:21:00Z',
+      });
+    return json({ items: [clip], page: 1, pageSize: 20, total: 1 });
+  });
+
+  render(
+    <I18nProvider>
+      <ClipsPanel />
+    </I18nProvider>,
+  );
+
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: /Detalhes e reprodu/ }));
+
+  expect(await screen.findByText('Resultado da análise')).toBeInTheDocument();
+  expect(await screen.findByText('yolox-nano-0.1.1rc0')).toBeInTheDocument();
+  expect(await screen.findByText(/person · 87%/)).toBeInTheDocument();
 });

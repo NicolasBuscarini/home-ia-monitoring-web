@@ -34,6 +34,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  Reflect.deleteProperty(navigator, 'mediaDevices');
 });
 
 function stubImageDecoder() {
@@ -124,6 +125,43 @@ describe('biometric enrollment panel', () => {
     );
   });
 
+  it('explains a denied camera permission instead of failing silently', async () => {
+    stubImageDecoder();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(response([]));
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn(async () => {
+          throw new DOMException('denied', 'NotAllowedError');
+        }),
+      },
+    });
+
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Nenhum cadastro biométrico para esta conta ainda.');
+    await user.click(screen.getByRole('button', { name: 'Usar a câmera' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'A permissão da câmera foi negada. Autorize no navegador ou escolha um arquivo.',
+    );
+  });
+
+  it('rejects a file above the enlarged upload budget', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(response([]));
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Nenhum cadastro biométrico para esta conta ainda.');
+    const oversized = new File([new Uint8Array(12 * 1024 * 1024 + 1)], 'grande.jpg', {
+      type: 'image/jpeg',
+    });
+    await user.upload(screen.getByLabelText(/Imagem do rosto/), oversized);
+    await user.click(screen.getByRole('checkbox', { name: /autorizo este cadastro biométrico/ }));
+    await user.click(screen.getByRole('button', { name: 'Cadastrar biometria' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('imagem');
+  });
+
   it('links and unlinks an active enrollment to an authorized roster person', async () => {
     let items: unknown[] = [{ ...enrollment, personPublicId: null }];
     const requests: Array<{ method: string; body?: string }> = [];
@@ -166,6 +204,57 @@ describe('biometric enrollment panel', () => {
     expect(await screen.findByText('Vínculo com a pessoa autorizada removido.')).toBeInTheDocument();
     expect(await screen.findByText('Sem vínculo com pessoa autorizada.')).toBeInTheDocument();
     expect(requests.some((entry) => entry.method === 'DELETE')).toBe(true);
+  });
+
+  it('checks a fresh photo against an unlinked enrollment before linking', async () => {
+    stubImageDecoder();
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => 'blob:verify'),
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+    const requests: Array<{ method: string; body?: string }> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      const method = init?.method ?? 'GET';
+      requests.push({ method, body: init?.body ? String(init.body) : undefined });
+      if (method === 'GET') return response([{ ...enrollment, personPublicId: null }]);
+      if (method === 'POST') {
+        return response({
+          matches: true,
+          score: 0.912,
+          threshold: 0.363,
+          modelId: 'opencv-zoo-sface',
+          modelVersion: '2021dec',
+          embeddingSchemaVersion: 'face-embedding.v1',
+          dimensions: 128,
+        });
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+
+    const user = userEvent.setup();
+    render(
+      <I18nProvider>
+        <BiometricEnrollmentPanel people={[{ publicId: 'PER000000000001', displayName: 'Ana' }]} />
+      </I18nProvider>,
+    );
+
+    expect(await screen.findByText('Sem vínculo com pessoa autorizada.')).toBeInTheDocument();
+    const file = new File([new Uint8Array([0xff, 0xd8, 0xff])], 'conferir.jpg', {
+      type: 'image/jpeg',
+    });
+    await user.upload(screen.getByLabelText('Conferir rosto'), file);
+
+    expect(
+      await screen.findByText(/Confere com esta inscrição \(similaridade 0\.912; limiar 0\.363\)/),
+    ).toBeInTheDocument();
+    const post = requests.find((entry) => entry.method === 'POST');
+    const payload = JSON.parse(post?.body ?? '') as Record<string, unknown>;
+    expect(payload.mediaType).toBe('image/jpeg');
+    expect(payload.width).toBe(160);
+    expect(payload.height).toBe(160);
+    expect(typeof payload.imageBase64).toBe('string');
+    expect(screen.queryByText(/imageBase64/)).not.toBeInTheDocument();
   });
 
   it('revokes the active enrollment after confirmation', async () => {

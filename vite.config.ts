@@ -18,6 +18,7 @@ export default defineConfig(({ command, mode }) => {
         filename: 'remoteEntry.js',
         exposes: {
           './MonitoringModule': './src/MonitoringModule.tsx',
+          './BiometricsModule': './src/features/biometrics/BiometricsModule.tsx',
         },
         shared: ['react', 'react-dom', 'home-ia-shared'],
         dts: false,

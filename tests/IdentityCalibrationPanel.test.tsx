@@ -79,7 +79,8 @@ describe('identity calibration panel', () => {
     expect(screen.getByRole('button', { name: 'Salvar rascunho' })).toBeEnabled();
 
     const thresholdInputs = screen.getAllByLabelText('Limiar de similaridade');
-    const thresholdNumber = thresholdInputs[1]!;
+    const thresholdNumber = thresholdInputs[1];
+    if (!thresholdNumber) throw new Error('threshold input is missing');
     await user.clear(thresholdNumber);
     await user.type(thresholdNumber, '0.8');
     expect(screen.getByText('100%')).toBeInTheDocument();

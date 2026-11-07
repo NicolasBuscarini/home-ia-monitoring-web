@@ -40,6 +40,20 @@ interface ClipDetails {
   attemptCount: number;
   updatedAtUtc: string;
 }
+interface ClipAnalysisObject {
+  className: string;
+  classId: number;
+  score: number;
+  frameIndex: number;
+}
+interface ClipAnalysisResult {
+  clipPublicId: string;
+  analysisVersion: string;
+  modelVersion: string;
+  framesAnalyzed: number;
+  processedAtUtc: string;
+  objects: ClipAnalysisObject[];
+}
 
 const PAGE_SIZE = 20;
 
@@ -72,6 +86,7 @@ const analysisKeys: Record<string, TranslationKey> = {
   processing: 'clips.analysisState.processing',
   retry_wait: 'clips.analysisState.retry_wait',
   unavailable: 'clips.analysisState.unavailable',
+  completed: 'clips.analysisState.completed',
   failed: 'clips.analysisState.failed',
 };
 interface TriggerConfiguration {
@@ -154,6 +169,20 @@ export function ClipsPanel({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState('');
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteNotice, setDeleteNotice] = useState<{ text: string; error: boolean }>();
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    kind: 'selected' | 'detail' | 'all';
+    clipId?: string;
+  }>();
+  const [filtersOpen, setFiltersOpen] = useState(
+    () =>
+      !(
+        typeof window !== 'undefined' &&
+        typeof window.matchMedia === 'function' &&
+        window.matchMedia('(max-width: 767.98px)').matches
+      ),
+  );
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [from, setFrom] = useState('');
@@ -161,6 +190,8 @@ export function ClipsPanel({
   const [to, setTo] = useState('');
   const [toTime, setToTime] = useState('');
   const [selected, setSelected] = useState<ClipDetails>();
+  const [analysisResult, setAnalysisResult] = useState<ClipAnalysisResult>();
+  const [analysisResultMissing, setAnalysisResultMissing] = useState(false);
   const [playbackError, setPlaybackError] = useState(false);
   const [playbackAttempt, setPlaybackAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -378,6 +409,90 @@ export function ClipsPanel({
       setDownloadError(t('clips.download.error'));
     } finally {
       setDownloading(false);
+    }
+  }
+
+  async function deleteAllClips() {
+    setDeleteBusy(true);
+    setDeleteNotice(undefined);
+    try {
+      const response = await fetch('/api/v1/clips/delete-all', {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (!response.ok) throw new Error(String(response.status));
+      const result = (await response.json()) as {
+        deleted: number;
+        skippedPreserved: number;
+        skippedArchived: number;
+        skippedNotReady: number;
+        skippedActiveAnalysis: number;
+        failed: number;
+      };
+      const kept =
+        result.skippedPreserved +
+        result.skippedArchived +
+        result.skippedNotReady +
+        result.skippedActiveAnalysis;
+      setSelectedIds(new Set());
+      closeDetail();
+      await load(1);
+      setDeleteNotice({
+        text: t('clips.delete.allSummary', {
+          count: result.deleted,
+          kept,
+          preserved: result.skippedPreserved,
+          archived: result.skippedArchived,
+          notReady: result.skippedNotReady,
+          analysis: result.skippedActiveAnalysis,
+          failed: result.failed,
+        }),
+        error: result.failed > 0,
+      });
+    } catch {
+      setDeleteNotice({ text: t('clips.delete.allError'), error: true });
+    } finally {
+      setDeleteBusy(false);
+      setDeleteConfirm(undefined);
+    }
+  }
+
+  async function deleteClips(ids: string[], detail: boolean) {
+    if (ids.length === 0) return;
+    setDeleteBusy(true);
+    setDeleteNotice(undefined);
+    try {
+      const response = await fetch('/api/v1/clips/delete', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clipIds: ids }),
+      });
+      if (!response.ok) throw new Error(String(response.status));
+      const result = (await response.json()) as {
+        deleted: string[];
+        failed: Array<{ clipId: string; code: string }>;
+      };
+      const deleted = new Set(result.deleted);
+      if (deleted.size > 0) {
+        setItems((current) => current.filter((item) => !deleted.has(item.publicId)));
+        setTotal((current) => Math.max(0, current - deleted.size));
+        setSelectedIds((current) => new Set([...current].filter((id) => !deleted.has(id))));
+        if (detail && selected && deleted.has(selected.clip.publicId)) closeDetail();
+      }
+      setDeleteNotice(
+        result.failed.length === 0
+          ? { text: t('clips.delete.success', { count: deleted.size }), error: false }
+          : {
+              text: t('clips.delete.partial', { count: deleted.size, failed: result.failed.length }),
+              error: true,
+            },
+      );
+    } catch {
+      setDeleteNotice({ text: t('clips.delete.error'), error: true });
+    } finally {
+      setDeleteBusy(false);
+      setDeleteConfirm(undefined);
     }
   }
 
@@ -697,8 +812,22 @@ export function ClipsPanel({
       setPlaybackError(false);
       setPlaybackAttempt(0);
       setError('');
+      setAnalysisResult(undefined);
+      setAnalysisResultMissing(false);
       try {
-        setSelected(await getJson<ClipDetails>(`/api/v1/clips/${encodeURIComponent(clipId)}`));
+        const details = await getJson<ClipDetails>(`/api/v1/clips/${encodeURIComponent(clipId)}`);
+        setSelected(details);
+        if (details.clip.analysisStatus === 'completed') {
+          try {
+            setAnalysisResult(
+              await getJson<ClipAnalysisResult>(
+                `/api/v1/clips/${encodeURIComponent(clipId)}/analysis-result`,
+              ),
+            );
+          } catch {
+            setAnalysisResultMissing(true);
+          }
+        }
         setLinkNotice(undefined);
         requestedClipRef.current = clipId;
         if (deepLinkParams?.clip !== clipId) {
@@ -891,9 +1020,22 @@ export function ClipsPanel({
 
   function analysisBadgeClass(value: string) {
     if (value === 'failed') return 'text-bg-danger';
+    if (value === 'completed') return 'text-bg-success';
     if (['processing', 'analysis_pending', 'retry_wait'].includes(value)) return 'text-bg-info';
     return 'text-bg-secondary';
   }
+
+  const activeFilterCount = [
+    from,
+    to,
+    state,
+    publicId,
+    analysis,
+    minDuration,
+    maxDuration,
+    preserved,
+    sort !== 'newest' ? sort : '',
+  ].filter(Boolean).length;
 
   return (
     <section className="panel-card clips-panel" aria-labelledby="clips-title">
@@ -906,6 +1048,39 @@ export function ClipsPanel({
           <p className="small text-secondary mb-0">{t('clips.description')}</p>
         </div>
         <div className="clips-header-actions">
+          {isAdmin &&
+            (deleteConfirm?.kind === 'all' ? (
+              <span className="d-flex flex-wrap align-items-center gap-2">
+                <span className="small" role="status">
+                  {t('clips.delete.confirmAll')}
+                </span>
+                <button
+                  className="btn btn-danger btn-sm"
+                  type="button"
+                  disabled={deleteBusy}
+                  onClick={() => void deleteAllClips()}
+                >
+                  {deleteBusy ? t('clips.delete.deleting') : t('clips.delete.confirm')}
+                </button>
+                <button
+                  className="btn btn-outline-secondary btn-sm"
+                  type="button"
+                  disabled={deleteBusy}
+                  onClick={() => setDeleteConfirm(undefined)}
+                >
+                  {t('clips.delete.cancel')}
+                </button>
+              </span>
+            ) : (
+              <button
+                className="btn btn-outline-danger btn-sm"
+                type="button"
+                disabled={busy || deleteBusy}
+                onClick={() => setDeleteConfirm({ kind: 'all' })}
+              >
+                {t('clips.delete.all')}
+              </button>
+            ))}
           <button
             className="btn btn-outline-secondary btn-sm"
             type="button"
@@ -926,205 +1101,223 @@ export function ClipsPanel({
               void load(1);
             }}
           >
-            <fieldset className="clips-quick-ranges">
-              <legend className="visually-hidden">{t('clips.quickRange.label')}</legend>
-              {(['today', '7d', '30d', 'all'] as const).map((value) => (
-                <button
-                  key={value}
-                  className={`btn btn-sm ${range === value ? 'btn-primary' : 'btn-outline-secondary'}`}
-                  type="button"
-                  aria-pressed={range === value}
-                  onClick={() => applyQuickRange(value)}
-                >
-                  {t(`clips.quickRange.${value}`)}
-                </button>
-              ))}
-            </fieldset>
-            <fieldset className="clips-filter-group">
-              <legend>{t('clips.filter.groupPeriod')}</legend>
-              <div className="clips-filter-grid">
-                <div className="clips-filter-field">
-                  <label className="form-label" htmlFor="clips-from">
-                    {t('clips.from')}
-                  </label>
-                  <input
-                    className="form-control"
-                    id="clips-from"
-                    type="date"
-                    value={from}
-                    onChange={(event) => {
-                      setFrom(event.target.value);
-                      setRange('custom');
-                    }}
-                  />
-                </div>
-                <div className="clips-filter-field">
-                  <label className="form-label" htmlFor="clips-from-time">
-                    {t('clips.filter.fromTime')}
-                  </label>
-                  <input
-                    className="form-control"
-                    id="clips-from-time"
-                    type="time"
-                    value={fromTime}
-                    onChange={(event) => setFromTime(event.target.value)}
-                  />
-                </div>
-                <div className="clips-filter-field">
-                  <label className="form-label" htmlFor="clips-to">
-                    {t('clips.to')}
-                  </label>
-                  <input
-                    className="form-control"
-                    id="clips-to"
-                    type="date"
-                    value={to}
-                    onChange={(event) => {
-                      setTo(event.target.value);
-                      setRange('custom');
-                    }}
-                  />
-                </div>
-                <div className="clips-filter-field">
-                  <label className="form-label" htmlFor="clips-to-time">
-                    {t('clips.filter.toTime')}
-                  </label>
-                  <input
-                    className="form-control"
-                    id="clips-to-time"
-                    type="time"
-                    value={toTime}
-                    onChange={(event) => setToTime(event.target.value)}
-                  />
-                </div>
-              </div>
-            </fieldset>
-            <fieldset className="clips-filter-group">
-              <legend>{t('clips.filter.groupIdentity')}</legend>
-              <div className="clips-filter-grid">
-                <div className="clips-filter-field">
-                  <label className="form-label" htmlFor="clips-public-id">
-                    {t('clips.filter.publicId')}
-                  </label>
-                  <input
-                    className="form-control"
-                    id="clips-public-id"
-                    value={publicId}
-                    placeholder={t('clips.filter.publicIdPlaceholder')}
-                    onChange={(event) => setPublicId(event.target.value)}
-                  />
-                </div>
-                <div className="clips-filter-field">
-                  <label className="form-label" htmlFor="clips-state">
-                    {t('clips.state.label')}
-                  </label>
-                  <select
-                    className="form-select"
-                    id="clips-state"
-                    value={state}
-                    onChange={(event) => setState(event.target.value)}
+            <div className="clips-filter-toolbar">
+              <fieldset className="clips-quick-ranges">
+                <legend className="visually-hidden">{t('clips.quickRange.label')}</legend>
+                {(['today', '7d', '30d', 'all'] as const).map((value) => (
+                  <button
+                    key={value}
+                    className={`btn btn-sm ${range === value ? 'btn-primary' : 'btn-outline-secondary'}`}
+                    type="button"
+                    aria-pressed={range === value}
+                    onClick={() => applyQuickRange(value)}
                   >
-                    <option value="">{t('clips.state.all')}</option>
-                    {(['collecting', 'ready', 'failed', 'lost_capacity'] as const).map((item) => (
-                      <option key={item} value={item}>
-                        {t(`clips.state.${item}`)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="clips-filter-field">
-                  <label className="form-label" htmlFor="clips-analysis">
-                    {t('clips.filter.analysis')}
-                  </label>
-                  <select
-                    className="form-select"
-                    id="clips-analysis"
-                    value={analysis}
-                    onChange={(event) => setAnalysis(event.target.value)}
-                  >
-                    <option value="">{t('clips.filter.analysisAny')}</option>
-                    <option value="performed">{t('clips.filter.analysisPerformed')}</option>
-                    <option value="not_performed">{t('clips.filter.analysisNotPerformed')}</option>
-                  </select>
-                </div>
-              </div>
-            </fieldset>
-            <fieldset className="clips-filter-group">
-              <legend>{t('clips.filter.groupDuration')}</legend>
-              <div className="clips-filter-grid">
-                <div className="clips-filter-field">
-                  <label className="form-label" htmlFor="clips-min-duration">
-                    {t('clips.filter.minDuration')}
-                  </label>
-                  <input
-                    className="form-control"
-                    id="clips-min-duration"
-                    type="number"
-                    min="0"
-                    max="86400"
-                    value={minDuration}
-                    onChange={(event) => setMinDuration(event.target.value)}
-                  />
-                </div>
-                <div className="clips-filter-field">
-                  <label className="form-label" htmlFor="clips-max-duration">
-                    {t('clips.filter.maxDuration')}
-                  </label>
-                  <input
-                    className="form-control"
-                    id="clips-max-duration"
-                    type="number"
-                    min="0"
-                    max="86400"
-                    value={maxDuration}
-                    onChange={(event) => setMaxDuration(event.target.value)}
-                  />
-                </div>
-              </div>
-            </fieldset>
-            <fieldset className="clips-filter-group">
-              <legend>{t('clips.filter.groupOrder')}</legend>
-              <div className="clips-filter-grid">
-                <div className="clips-filter-field">
-                  <label className="form-label" htmlFor="clips-sort">
-                    {t('clips.sort.label')}
-                  </label>
-                  <select
-                    className="form-select"
-                    id="clips-sort"
-                    value={sort}
-                    onChange={(event) => setSort(event.target.value)}
-                  >
-                    {(['newest', 'oldest', 'longest', 'shortest', 'largest', 'smallest'] as const).map(
-                      (value) => (
-                        <option key={value} value={value}>
-                          {t(`clips.sort.${value}`)}
-                        </option>
-                      ),
-                    )}
-                  </select>
-                </div>
-                <div className="clips-filter-field">
-                  <label className="form-label" htmlFor="clips-preserved">
-                    {t('clips.filter.preserved')}
-                  </label>
-                  <select
-                    className="form-select"
-                    id="clips-preserved"
-                    value={preserved}
-                    onChange={(event) => setPreserved(event.target.value)}
-                  >
-                    <option value="">{t('clips.filter.preservedAll')}</option>
-                    <option value="true">{t('clips.filter.preservedYes')}</option>
-                    <option value="false">{t('clips.filter.preservedNo')}</option>
-                  </select>
-                </div>
-              </div>
-            </fieldset>
-            <div className="clips-filter-actions">
-              <button className="btn btn-secondary" type="submit" disabled={busy}>
-                {t('clips.filter')}
+                    {t(`clips.quickRange.${value}`)}
+                  </button>
+                ))}
+              </fieldset>
+              <button
+                className="btn btn-outline-secondary btn-sm clips-filter-toggle"
+                type="button"
+                aria-expanded={filtersOpen}
+                aria-controls="clips-advanced-filters"
+                onClick={() => setFiltersOpen((current) => !current)}
+              >
+                <span>{t('clips.filters.toggle')}</span>
+                {activeFilterCount > 0 && <span className="badge text-bg-primary">{activeFilterCount}</span>}
+                <span aria-hidden="true">{filtersOpen ? '▴' : '▾'}</span>
               </button>
+            </div>
+            <div id="clips-advanced-filters" className="clips-filter-body" data-collapsed={!filtersOpen}>
+              <fieldset className="clips-filter-group">
+                <legend>{t('clips.filter.groupPeriod')}</legend>
+                <div className="clips-filter-grid">
+                  <div className="clips-filter-field">
+                    <label className="form-label" htmlFor="clips-from">
+                      {t('clips.from')}
+                    </label>
+                    <input
+                      className="form-control"
+                      id="clips-from"
+                      type="date"
+                      value={from}
+                      onChange={(event) => {
+                        setFrom(event.target.value);
+                        setRange('custom');
+                      }}
+                    />
+                  </div>
+                  <div className="clips-filter-field">
+                    <label className="form-label" htmlFor="clips-from-time">
+                      {t('clips.filter.fromTime')}
+                    </label>
+                    <input
+                      className="form-control"
+                      id="clips-from-time"
+                      type="time"
+                      value={fromTime}
+                      onChange={(event) => setFromTime(event.target.value)}
+                    />
+                  </div>
+                  <div className="clips-filter-field">
+                    <label className="form-label" htmlFor="clips-to">
+                      {t('clips.to')}
+                    </label>
+                    <input
+                      className="form-control"
+                      id="clips-to"
+                      type="date"
+                      value={to}
+                      onChange={(event) => {
+                        setTo(event.target.value);
+                        setRange('custom');
+                      }}
+                    />
+                  </div>
+                  <div className="clips-filter-field">
+                    <label className="form-label" htmlFor="clips-to-time">
+                      {t('clips.filter.toTime')}
+                    </label>
+                    <input
+                      className="form-control"
+                      id="clips-to-time"
+                      type="time"
+                      value={toTime}
+                      onChange={(event) => setToTime(event.target.value)}
+                    />
+                  </div>
+                </div>
+              </fieldset>
+              <fieldset className="clips-filter-group">
+                <legend>{t('clips.filter.groupIdentity')}</legend>
+                <div className="clips-filter-grid">
+                  <div className="clips-filter-field">
+                    <label className="form-label" htmlFor="clips-public-id">
+                      {t('clips.filter.publicId')}
+                    </label>
+                    <input
+                      className="form-control"
+                      id="clips-public-id"
+                      value={publicId}
+                      placeholder={t('clips.filter.publicIdPlaceholder')}
+                      onChange={(event) => setPublicId(event.target.value)}
+                    />
+                  </div>
+                  <div className="clips-filter-field">
+                    <label className="form-label" htmlFor="clips-state">
+                      {t('clips.state.label')}
+                    </label>
+                    <select
+                      className="form-select"
+                      id="clips-state"
+                      value={state}
+                      onChange={(event) => setState(event.target.value)}
+                    >
+                      <option value="">{t('clips.state.all')}</option>
+                      {(['collecting', 'ready', 'failed', 'lost_capacity'] as const).map((item) => (
+                        <option key={item} value={item}>
+                          {t(`clips.state.${item}`)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="clips-filter-field">
+                    <label className="form-label" htmlFor="clips-analysis">
+                      {t('clips.filter.analysis')}
+                    </label>
+                    <select
+                      className="form-select"
+                      id="clips-analysis"
+                      value={analysis}
+                      onChange={(event) => setAnalysis(event.target.value)}
+                    >
+                      <option value="">{t('clips.filter.analysisAny')}</option>
+                      <option value="performed">{t('clips.filter.analysisPerformed')}</option>
+                      <option value="not_performed">{t('clips.filter.analysisNotPerformed')}</option>
+                      <option value="pending">{t('clips.filter.analysisPending')}</option>
+                      <option value="completed">{t('clips.filter.analysisCompleted')}</option>
+                      <option value="failed">{t('clips.filter.analysisFailed')}</option>
+                    </select>
+                  </div>
+                </div>
+              </fieldset>
+              <fieldset className="clips-filter-group">
+                <legend>{t('clips.filter.groupDuration')}</legend>
+                <div className="clips-filter-grid">
+                  <div className="clips-filter-field">
+                    <label className="form-label" htmlFor="clips-min-duration">
+                      {t('clips.filter.minDuration')}
+                    </label>
+                    <input
+                      className="form-control"
+                      id="clips-min-duration"
+                      type="number"
+                      min="0"
+                      max="86400"
+                      value={minDuration}
+                      onChange={(event) => setMinDuration(event.target.value)}
+                    />
+                  </div>
+                  <div className="clips-filter-field">
+                    <label className="form-label" htmlFor="clips-max-duration">
+                      {t('clips.filter.maxDuration')}
+                    </label>
+                    <input
+                      className="form-control"
+                      id="clips-max-duration"
+                      type="number"
+                      min="0"
+                      max="86400"
+                      value={maxDuration}
+                      onChange={(event) => setMaxDuration(event.target.value)}
+                    />
+                  </div>
+                </div>
+              </fieldset>
+              <fieldset className="clips-filter-group">
+                <legend>{t('clips.filter.groupOrder')}</legend>
+                <div className="clips-filter-grid">
+                  <div className="clips-filter-field">
+                    <label className="form-label" htmlFor="clips-sort">
+                      {t('clips.sort.label')}
+                    </label>
+                    <select
+                      className="form-select"
+                      id="clips-sort"
+                      value={sort}
+                      onChange={(event) => setSort(event.target.value)}
+                    >
+                      {(['newest', 'oldest', 'longest', 'shortest', 'largest', 'smallest'] as const).map(
+                        (value) => (
+                          <option key={value} value={value}>
+                            {t(`clips.sort.${value}`)}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </div>
+                  <div className="clips-filter-field">
+                    <label className="form-label" htmlFor="clips-preserved">
+                      {t('clips.filter.preserved')}
+                    </label>
+                    <select
+                      className="form-select"
+                      id="clips-preserved"
+                      value={preserved}
+                      onChange={(event) => setPreserved(event.target.value)}
+                    >
+                      <option value="">{t('clips.filter.preservedAll')}</option>
+                      <option value="true">{t('clips.filter.preservedYes')}</option>
+                      <option value="false">{t('clips.filter.preservedNo')}</option>
+                    </select>
+                  </div>
+                </div>
+              </fieldset>
+              <div className="clips-filter-actions">
+                <button className="btn btn-secondary" type="submit" disabled={busy}>
+                  {t('clips.filter')}
+                </button>
+              </div>
             </div>
             {(from ||
               to ||
@@ -1179,7 +1372,50 @@ export function ClipsPanel({
                   {downloadError}
                 </span>
               )}
+              {isAdmin &&
+                (deleteConfirm?.kind === 'selected' ? (
+                  <span className="d-flex flex-wrap align-items-center gap-2">
+                    <span className="small" role="status">
+                      {t('clips.delete.confirmSelected', { count: selectedIds.size })}
+                    </span>
+                    <button
+                      className="btn btn-danger btn-sm"
+                      type="button"
+                      disabled={deleteBusy}
+                      onClick={() => void deleteClips([...selectedIds], false)}
+                    >
+                      {deleteBusy ? t('clips.delete.deleting') : t('clips.delete.confirm')}
+                    </button>
+                    <button
+                      className="btn btn-outline-secondary btn-sm"
+                      type="button"
+                      disabled={deleteBusy}
+                      onClick={() => setDeleteConfirm(undefined)}
+                    >
+                      {t('clips.delete.cancel')}
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    className="btn btn-outline-danger btn-sm"
+                    type="button"
+                    disabled={selectedIds.size === 0 || deleteBusy}
+                    onClick={() => setDeleteConfirm({ kind: 'selected' })}
+                  >
+                    {t('clips.delete.selected', { count: selectedIds.size })}
+                  </button>
+                ))}
             </div>
+          )}
+
+          {deleteNotice && (
+            <p
+              className={deleteNotice.error ? 'error-text' : 'small text-secondary'}
+              role={deleteNotice.error ? 'alert' : 'status'}
+              aria-live="polite"
+            >
+              {deleteNotice.text}
+            </p>
           )}
 
           {error && (
@@ -1649,6 +1885,45 @@ export function ClipsPanel({
                   <dt>{t('clips.updated')}</dt>
                   <dd>{formatDate(selected.updatedAtUtc)}</dd>
                 </dl>
+                {selected.clip.analysisStatus === 'completed' && (
+                  <section className="clip-analysis-result" aria-labelledby="clip-analysis-result-title">
+                    <h3 className="h6" id="clip-analysis-result-title">
+                      {t('clips.analysisResult.title')}
+                    </h3>
+                    {analysisResult ? (
+                      <>
+                        <dl className="clip-metadata">
+                          <dt>{t('clips.analysisResult.model')}</dt>
+                          <dd>{analysisResult.modelVersion}</dd>
+                          <dt>{t('clips.analysisResult.frames')}</dt>
+                          <dd>{analysisResult.framesAnalyzed}</dd>
+                          <dt>{t('clips.analysisResult.processedAt')}</dt>
+                          <dd>{formatDate(analysisResult.processedAtUtc)}</dd>
+                        </dl>
+                        {analysisResult.objects.length === 0 ? (
+                          <p role="status">{t('clips.analysisResult.empty')}</p>
+                        ) : (
+                          <ul className="list-unstyled">
+                            {analysisResult.objects.map((object) => (
+                              <li
+                                key={`${object.className}-${object.classId}-${object.frameIndex}-${object.score}`}
+                              >
+                                {object.className} · {Math.round(object.score * 100)}% ·{' '}
+                                {t('clips.analysisResult.frame')} {object.frameIndex}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </>
+                    ) : (
+                      <p role="status">
+                        {analysisResultMissing
+                          ? t('clips.analysisResult.unavailable')
+                          : t('clips.analysisResult.loading')}
+                      </p>
+                    )}
+                  </section>
+                )}
                 <div className="clip-dialog-actions">
                   <a
                     className="btn btn-outline-secondary"
@@ -1658,6 +1933,36 @@ export function ClipsPanel({
                     {t('clips.download')}
                   </a>
                   {renderAnalysisAction(selected.clip)}
+                  {isAdmin &&
+                    (deleteConfirm?.kind === 'detail' && deleteConfirm.clipId === selected.clip.publicId ? (
+                      <>
+                        <button
+                          className="btn btn-danger"
+                          type="button"
+                          disabled={deleteBusy}
+                          onClick={() => void deleteClips([selected.clip.publicId], true)}
+                        >
+                          {deleteBusy ? t('clips.delete.deleting') : t('clips.delete.confirm')}
+                        </button>
+                        <button
+                          className="btn btn-outline-secondary"
+                          type="button"
+                          disabled={deleteBusy}
+                          onClick={() => setDeleteConfirm(undefined)}
+                        >
+                          {t('clips.delete.cancel')}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        className="btn btn-outline-danger"
+                        type="button"
+                        disabled={deleteBusy}
+                        onClick={() => setDeleteConfirm({ kind: 'detail', clipId: selected.clip.publicId })}
+                      >
+                        {t('clips.delete.detail')}
+                      </button>
+                    ))}
                   {isAdmin &&
                     selected.clip.state === 'ready' &&
                     selected.clip.archiveStatus === 'archived' && (

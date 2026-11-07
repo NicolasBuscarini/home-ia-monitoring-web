@@ -1,6 +1,6 @@
 # home-ia-monitoring-web
 
-Microfrontend React/TypeScript do módulo **Monitoramento** do Home IA. Este repositório é um remote de Module Federation exposto como `./MonitoringModule`; o shell do portal (`garage-watch-web` nesta fase) fornece sessão, navegação, tema, idioma e o container visual.
+Microfrontend React/TypeScript do módulo **Monitoramento** e do módulo de topo **Biometria** do Home IA. Este repositório é um remote de Module Federation exposto como `./MonitoringModule` e `./BiometricsModule`; o shell do portal fornece sessão, navegação, tema, idioma e o container visual.
 
 ## Contrato exposto
 
@@ -26,7 +26,7 @@ A partir da raiz do repositório de contexto:
 
 O Compose fixa Node por digest; `npm ci`, Biome, Vitest e build Vite rodam no container. O build gera `remoteEntry.js` e o exposto `MonitoringModule`.
 
-O remote contém o código canônico de monitoramento (dashboard, player HLS, clipes, painéis administrativos, triagem de identidade e operações). A triagem em Gestão→Pessoas lista observações minimizadas, candidatos e histórico, e permite confirmar, rejeitar, marcar inconclusivo ou associar pessoa ativa; a decisão é sempre autorizada pela API e nunca renderiza imagem, recorte ou embedding. Logo abaixo, a **calibração de reconhecimento** ajusta limiar/margem com métricas recalculadas na amostra revisada, grava rascunho versionado e exige promoção/reversão explícitas; a tela recebe apenas histogramas agregados, nunca imagem, embedding ou identificador de observação. i18n, tema, HTTP, tipos, StatusBadge e CSS global vêm de `home-ia-shared`, compartilhado como singleton; não há cópia local desses módulos. O shell carrega o CSS global e o remote usa as mesmas classes.
+O remote contém o código canônico de monitoramento (dashboard, player HLS, clipes, painéis administrativos, triagem de identidade e operações). O cadastro biométrico aceita JPEG/PNG até 12 MiB e 6000 px, reduz para 1600 px no cliente quando possível (o portal compacta e valida os pixels reais antes da extração, sem armazenar a imagem) e oferece captura pela câmera do dispositivo com instruções de iluminação, frontalidade, enquadramento e posicionamento. A triagem no submenu **Observações** do módulo Biometria lista observações minimizadas, candidatos e histórico, e permite confirmar, rejeitar, marcar inconclusivo ou associar pessoa ativa; a decisão é sempre autorizada pela API e nunca renderiza imagem, recorte ou embedding. O submenu **Calibração** ajusta limiar/margem com métricas recalculadas na amostra revisada, grava rascunho versionado e exige promoção/reversão explícitas; a tela recebe apenas histogramas agregados, nunca imagem, embedding ou identificador de observação. O submenu **Modelo facial** concentra a seleção versionada do extrator; o roster de pessoas permanece em Monitoramento→Gestão. i18n, tema, HTTP, tipos, StatusBadge e CSS global vêm de `home-ia-shared`, compartilhado como singleton; não há cópia local desses módulos. O shell carrega o CSS global e o remote usa as mesmas classes.
 
 ## Limites
 
