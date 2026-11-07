@@ -55,6 +55,50 @@ it('renders timeline thumbnails in the bounded thumbnail style', async () => {
   expect(screen.getByText(/Concluída/)).toBeInTheDocument();
 });
 
+it('retries a transient clips list failure before showing the load error', async () => {
+  let attempts = 0;
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const path = String(input);
+    if (path.startsWith('/api/v1/clips?')) {
+      attempts += 1;
+      if (attempts === 1) throw new TypeError('Failed to fetch');
+      return json({
+        items: [
+          {
+            publicId: 'CLP000000000042',
+            cameraId: 'CAM000000000001',
+            startedAtUtc: '2026-10-31T00:00:00Z',
+            endedAtUtc: '2026-10-31T00:00:10Z',
+            state: 'ready',
+            archiveStatus: 'not_requested',
+            analysisStatus: 'not_requested',
+            thumbnailUrl: null,
+            sizeBytes: 1024,
+            triggerReason: null,
+            triggerConfigVersion: null,
+          },
+        ],
+        page: 1,
+        pageSize: 20,
+        total: 1,
+      });
+    }
+    if (path.startsWith('/api/v1/admin/cameras')) return json({ items: [] });
+    if (path.startsWith('/api/v1/cameras')) return json({ items: [] });
+    return json({});
+  });
+
+  render(
+    <I18nProvider>
+      <ClipsPanel />
+    </I18nProvider>,
+  );
+
+  await screen.findByRole('button', { name: /Detalhes e reprodução/ }, { timeout: 3000 });
+  expect(attempts).toBe(2);
+  expect(screen.queryByText(/Não foi possível carregar os clipes/)).not.toBeInTheDocument();
+});
+
 it('lets an administrator configure the selected per-camera trigger with versioned API updates', async () => {
   let enabled = false;
   let version = 0;

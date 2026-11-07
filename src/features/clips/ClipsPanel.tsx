@@ -56,6 +56,28 @@ interface ClipAnalysisResult {
 }
 
 const PAGE_SIZE = 20;
+const CLIPS_TIMEOUT_MS = 10_000;
+const CLIPS_RETRY_DELAY_MS = 500;
+
+/**
+ * The timeline scan is the heaviest read in the module. A cold API (startup, rebuild or
+ * container restart) can exceed the shared 3 s request budget or answer 5xx while the
+ * monitoring service reconnects, so the list retries briefly before surfacing the error.
+ */
+async function fetchClipsPage(query: URLSearchParams): Promise<ClipPage> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await getJson<ClipPage>(`/api/v1/clips?${query}`, AbortSignal.timeout(CLIPS_TIMEOUT_MS));
+    } catch (failure) {
+      lastError = failure;
+      const retryable = !(failure instanceof ApiError) || failure.status === 429 || failure.status >= 500;
+      if (!retryable || attempt === 2) break;
+      await new Promise((resolve) => setTimeout(resolve, CLIPS_RETRY_DELAY_MS * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
 
 function dayKey(value: string) {
   const date = new Date(value);
@@ -304,7 +326,7 @@ export function ClipsPanel({
           query.set('fromUtc', new Date(`${fromValue}T${fromTimeValue || '00:00'}:00Z`).toISOString());
         if (toValue)
           query.set('toUtc', new Date(`${toValue}T${toTimeValue || '23:59'}:59.999Z`).toISOString());
-        const result = await getJson<ClipPage>(`/api/v1/clips?${query}`);
+        const result = await fetchClipsPage(query);
         setItems((current) => {
           if (!append) return result.items;
           const seen = new Set(current.map((item) => item.publicId));
