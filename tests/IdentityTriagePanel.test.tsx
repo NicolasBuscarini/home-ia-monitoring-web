@@ -108,6 +108,66 @@ describe('identity triage panel', () => {
     });
   });
 
+  it('shows the sampled clip frames of an observation and explains when there is no clip', async () => {
+    const withoutClip = { ...observation, publicId: 'OBV000000000002', clipPublicId: null };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const path = String(input);
+      if (path.startsWith('/api/v1/admin/known-people'))
+        return response({ items: [person], page: 1, pageSize: 100, total: 1 });
+      if (path.startsWith('/api/v1/admin/identity-observations?'))
+        return response({ items: [observation, withoutClip], page: 1, pageSize: 25, total: 2 });
+      if (path === '/api/v1/admin/identity-observations/OBV000000000001')
+        return response({
+          summary: observation,
+          candidates: [{ personPublicId: person.publicId, score: 0.91 }],
+          reviews: [],
+        });
+      if (path === '/api/v1/admin/identity-observations/OBV000000000001/frames')
+        return response({
+          clipPublicId: 'CLP000000000001',
+          durationMilliseconds: 10000,
+          sampledFrames: 2,
+          frames: [
+            {
+              index: 0,
+              offsetMilliseconds: 1666,
+              faces: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.4 }],
+            },
+            { index: 1, offsetMilliseconds: 5000, faces: [] },
+          ],
+        });
+      if (path === '/api/v1/admin/identity-observations/OBV000000000002')
+        return response({ summary: withoutClip, candidates: [], reviews: [] });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    const user = userEvent.setup();
+    render(
+      <I18nProvider>
+        <IdentityTriagePanel />
+      </I18nProvider>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Abrir observação OBV000000000001' }));
+    expect(await screen.findByAltText('Frame 1 do clipe em 1.7 s')).toBeInTheDocument();
+    expect(screen.getByAltText('Frame 2 do clipe em 5.0 s')).toHaveAttribute(
+      'src',
+      '/api/v1/admin/identity-observations/OBV000000000001/frames/1',
+    );
+    expect(
+      screen.getByText(
+        'Frames amostrados pelo reconhecimento facial. Cada imagem é gerada sob demanda a partir do clipe e não fica armazenada.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Rosto detectado nesta amostra')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Abrir observação OBV000000000002' }));
+    expect(
+      await screen.findByText('Esta observação não tem clipe associado, então não há frames para revisar.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByAltText('Frame 1 do clipe em 1.7 s')).not.toBeInTheDocument();
+  });
+
   it('shows an empty state when the triage queue has no observations', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const path = String(input);

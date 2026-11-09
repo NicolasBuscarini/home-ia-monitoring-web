@@ -274,4 +274,71 @@ describe('biometric enrollment panel', () => {
       await screen.findByText('Cadastro biométrico revogado; o payload cifrado foi apagado.'),
     ).toBeInTheDocument();
   });
+
+  it('enrolls on behalf of another holder when a manager informs the public id', async () => {
+    stubImageDecoder();
+    const requests: Array<{ method: string; body?: string }> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      const method = init?.method ?? 'GET';
+      requests.push({ method, body: init?.body ? String(init.body) : undefined });
+      if (method === 'GET') return response([]);
+      if (method === 'POST') return response({ ...enrollment, userPublicId: 'USR000000000002' }, 201);
+      throw new Error(`Unexpected request: ${method}`);
+    });
+
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Nenhum cadastro biométrico para esta conta ainda.');
+
+    const file = new File([new Uint8Array([0xff, 0xd8, 0xff])], 'rosto.jpg', { type: 'image/jpeg' });
+    await user.upload(screen.getByLabelText(/Imagem do rosto/), file);
+    await user.type(screen.getByLabelText('ID público do titular (opcional)'), 'USR000000000002');
+
+    expect(screen.getByText(/Como gestor autorizado, confirmo que o titular consentiu/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('checkbox', { name: /Como gestor autorizado/ }));
+    await user.click(screen.getByRole('button', { name: 'Cadastrar biometria' }));
+
+    expect(
+      await screen.findByText('Cadastro biométrico criado e cifrado para o titular USR000000000002.'),
+    ).toBeInTheDocument();
+    const post = requests.find((entry) => entry.method === 'POST');
+    const payload = JSON.parse(post?.body ?? '') as Record<string, unknown>;
+    expect(payload.userPublicId).toBe('USR000000000002');
+    expect(payload.consentVersion).toBe(BIOMETRIC_CONSENT_VERSION);
+    expect(screen.getByLabelText('ID público do titular (opcional)')).toHaveValue('');
+  });
+
+  it('rejects an invalid holder id and reports an unknown holder without enrolling', async () => {
+    stubImageDecoder();
+    const requests: Array<{ method: string; body?: string }> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      const method = init?.method ?? 'GET';
+      requests.push({ method, body: init?.body ? String(init.body) : undefined });
+      if (method === 'GET') return response([]);
+      return response({ code: 'biometric_enrollment_not_found' }, 404);
+    });
+
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Nenhum cadastro biométrico para esta conta ainda.');
+    const file = new File([new Uint8Array([0xff, 0xd8, 0xff])], 'rosto.jpg', { type: 'image/jpeg' });
+    await user.upload(screen.getByLabelText(/Imagem do rosto/), file);
+
+    await user.type(screen.getByLabelText('ID público do titular (opcional)'), 'USR123');
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: 'Cadastrar biometria' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Informe um ID público válido');
+    expect(requests.some((entry) => entry.method === 'POST')).toBe(false);
+
+    await user.clear(screen.getByLabelText('ID público do titular (opcional)'));
+    await user.type(screen.getByLabelText('ID público do titular (opcional)'), 'USR000000000002');
+    await user.click(screen.getByRole('button', { name: 'Cadastrar biometria' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Informe um ID público válido (USR seguido de 12 dígitos) de um titular existente.',
+    );
+    expect(requests.filter((entry) => entry.method === 'POST')).toHaveLength(1);
+  });
 });

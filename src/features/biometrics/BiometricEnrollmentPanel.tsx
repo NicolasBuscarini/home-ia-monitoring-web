@@ -10,6 +10,8 @@ const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 const MAX_IMAGE_DIMENSION = 6000;
 /** Largest dimension sent to the API; the portal compacts further before inference. */
 const REQUEST_IMAGE_DIMENSION = 1600;
+/** Public identifier format of an account; the API remains the authority over the target. */
+const USER_PUBLIC_ID_PATTERN = /^USR\d{12}$/;
 
 interface BiometricEnrollment {
   publicId: string;
@@ -48,6 +50,7 @@ type SubmitError =
   | 'unavailable'
   | 'conflict'
   | 'forbidden'
+  | 'target'
   | 'submit';
 type LoadError = '' | 'load';
 type LinkError = '' | 'target' | 'forbidden' | 'unavailable' | 'update';
@@ -62,12 +65,14 @@ export function BiometricEnrollmentPanel({ people = [] }: BiometricEnrollmentPan
   const { t, locale } = useI18n();
   const fileId = useId();
   const consentId = useId();
+  const targetId = useId();
   const [items, setItems] = useState<BiometricEnrollment[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<LoadError>('');
   const [submitError, setSubmitError] = useState<SubmitError>('');
   const [notice, setNotice] = useState('');
   const [consent, setConsent] = useState(false);
+  const [targetUser, setTargetUser] = useState('');
   const [file, setFile] = useState<File>();
   const [previewUrl, setPreviewUrl] = useState('');
   const [cameraActive, setCameraActive] = useState(false);
@@ -208,6 +213,11 @@ export function BiometricEnrollmentPanel({ people = [] }: BiometricEnrollmentPan
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setNotice('');
+    const target = targetUser.trim();
+    if (target && !USER_PUBLIC_ID_PATTERN.test(target)) {
+      setSubmitError('target');
+      return;
+    }
     if (!consent) {
       setSubmitError('consent');
       return;
@@ -228,16 +238,20 @@ export function BiometricEnrollmentPanel({ people = [] }: BiometricEnrollmentPan
           height: image.height,
           imageBase64: image.base64,
           consentVersion: BIOMETRIC_CONSENT_VERSION,
+          ...(target ? { userPublicId: target } : {}),
         }),
         signal: AbortSignal.timeout(15000),
       });
       if (!response.ok) throw new ApiError(await errorCode(response), response.status);
-      setNotice(t('biometrics.notice.enrolled'));
+      setNotice(
+        target ? t('biometrics.notice.enrolledFor', { id: target }) : t('biometrics.notice.enrolled'),
+      );
       setConsent(false);
+      setTargetUser('');
       setFile(undefined);
       await load();
     } catch (failure) {
-      setSubmitError(submitErrorKind(failure));
+      setSubmitError(submitErrorKind(failure, target !== ''));
     } finally {
       setBusy(false);
     }
@@ -615,6 +629,28 @@ export function BiometricEnrollmentPanel({ people = [] }: BiometricEnrollmentPan
         <p id={`${fileId}-hint`} className="small text-secondary">
           {t('biometrics.file.hint')}
         </p>
+        <label className="form-label" htmlFor={targetId}>
+          {t('biometrics.target.label')}
+        </label>
+        <input
+          id={targetId}
+          className="form-control mb-1"
+          type="text"
+          inputMode="text"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="USR000000000000"
+          value={targetUser}
+          aria-describedby={`${targetId}-hint`}
+          disabled={busy}
+          onChange={(event) => {
+            setTargetUser(event.currentTarget.value);
+            setSubmitError('');
+          }}
+        />
+        <p id={`${targetId}-hint`} className="small text-secondary">
+          {t('biometrics.target.hint')}
+        </p>
         <div className="form-check mb-3">
           <input
             id={consentId}
@@ -625,7 +661,7 @@ export function BiometricEnrollmentPanel({ people = [] }: BiometricEnrollmentPan
             onChange={(event) => setConsent(event.currentTarget.checked)}
           />
           <label className="form-check-label small" htmlFor={consentId}>
-            {t('biometrics.consent.accept')}
+            {targetUser.trim() ? t('biometrics.consent.accept.delegate') : t('biometrics.consent.accept')}
           </label>
         </div>
         <p className="small text-secondary biometrics-consent-text" id={`${consentId}-text`}>
@@ -676,7 +712,7 @@ function verifyErrorKind(
   return 'verify';
 }
 
-function submitErrorKind(failure: unknown): SubmitError {
+function submitErrorKind(failure: unknown, hasTarget = false): SubmitError {
   if (failure instanceof Error && failure.message === 'invalid-image') return 'image';
   if (!(failure instanceof ApiError)) return 'submit';
   if (failure.status === 400) {
@@ -688,6 +724,7 @@ function submitErrorKind(failure: unknown): SubmitError {
     return 'image';
   }
   if (failure.status === 403) return 'forbidden';
+  if (failure.status === 404) return hasTarget ? 'target' : 'submit';
   if (failure.status === 409) return 'conflict';
   if (failure.status === 503) return 'unavailable';
   return 'submit';

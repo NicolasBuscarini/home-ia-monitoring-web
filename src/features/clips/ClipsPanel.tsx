@@ -54,6 +54,43 @@ interface ClipAnalysisResult {
   processedAtUtc: string;
   objects: ClipAnalysisObject[];
 }
+interface IdentityObservationSummary {
+  publicId: string;
+  cameraPublicId: string | null;
+  clipPublicId: string | null;
+  observedAtUtc: string;
+  ingestedAtUtc: string;
+  matchStatus: string;
+  bestPersonPublicId: string | null;
+  bestScore: number | null;
+  margin: number | null;
+  policyVersion: string;
+  candidateCount: number;
+  reviewStatus: 'pending' | 'reviewed' | 'notRequired';
+  resolvedPersonPublicId: string | null;
+  latestReviewPublicId: string | null;
+}
+interface IdentityObservationPage {
+  items: IdentityObservationSummary[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+interface IdentityObservationDetail {
+  summary: IdentityObservationSummary;
+  candidates: Array<{ personPublicId: string; score: number }>;
+  reviews: Array<{
+    publicId: string;
+    decision: string;
+    selectedPersonPublicId: string | null;
+    note: string | null;
+    reviewerPublicId: string;
+    createdAtUtc: string;
+  }>;
+}
+interface KnownPersonPage {
+  items: Array<{ publicId: string; displayName: string }>;
+}
 
 const PAGE_SIZE = 20;
 const CLIPS_TIMEOUT_MS = 10_000;
@@ -110,6 +147,23 @@ const analysisKeys: Record<string, TranslationKey> = {
   unavailable: 'clips.analysisState.unavailable',
   completed: 'clips.analysisState.completed',
   failed: 'clips.analysisState.failed',
+};
+const identityMatchKeys: Record<string, TranslationKey> = {
+  suggested: 'people.identity.match.suggested',
+  ambiguous: 'people.identity.match.ambiguous',
+  unknown: 'people.identity.match.unknown',
+  noEnrollment: 'people.identity.match.noEnrollment',
+};
+const identityReviewKeys: Record<IdentityObservationSummary['reviewStatus'], TranslationKey> = {
+  pending: 'people.identity.status.pending',
+  reviewed: 'people.identity.status.reviewed',
+  notRequired: 'people.identity.status.notRequired',
+};
+const identityDecisionKeys: Record<string, TranslationKey> = {
+  confirmed: 'people.identity.decision.confirmed',
+  associated: 'people.identity.decision.associated',
+  rejected: 'people.identity.decision.rejected',
+  inconclusive: 'people.identity.decision.inconclusive',
 };
 interface TriggerConfiguration {
   cameraId: string;
@@ -214,6 +268,15 @@ export function ClipsPanel({
   const [selected, setSelected] = useState<ClipDetails>();
   const [analysisResult, setAnalysisResult] = useState<ClipAnalysisResult>();
   const [analysisResultMissing, setAnalysisResultMissing] = useState(false);
+  const [identityObservations, setIdentityObservations] = useState<IdentityObservationSummary[]>();
+  const [identityDetails, setIdentityDetails] = useState<Record<string, IdentityObservationDetail | null>>(
+    {},
+  );
+  const [identityPeople, setIdentityPeople] = useState<Record<string, string>>({});
+  const [identityLoading, setIdentityLoading] = useState(false);
+  const [identityError, setIdentityError] = useState('');
+  const identityPersonName = (publicId: string | null) =>
+    publicId ? (identityPeople[publicId] ?? publicId) : t('people.identity.noPerson');
   const [playbackError, setPlaybackError] = useState(false);
   const [playbackAttempt, setPlaybackAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -836,9 +899,53 @@ export function ClipsPanel({
       setError('');
       setAnalysisResult(undefined);
       setAnalysisResultMissing(false);
+      setIdentityObservations(undefined);
+      setIdentityDetails({});
+      setIdentityPeople({});
+      setIdentityError('');
+      setIdentityLoading(false);
       try {
         const details = await getJson<ClipDetails>(`/api/v1/clips/${encodeURIComponent(clipId)}`);
         setSelected(details);
+        requestedClipRef.current = clipId;
+        if (isAdmin) {
+          setIdentityLoading(true);
+          void (async () => {
+            try {
+              const [page, people] = await Promise.all([
+                getJson<IdentityObservationPage>(
+                  `/api/v1/admin/identity-observations?clipPublicId=${encodeURIComponent(clipId)}&pageSize=50`,
+                ),
+                getJson<KnownPersonPage>('/api/v1/admin/known-people?page=1&pageSize=100').catch(() => ({
+                  items: [],
+                })),
+              ]);
+              if (requestedClipRef.current !== clipId) return;
+              setIdentityObservations(page.items);
+              setIdentityPeople(
+                Object.fromEntries(people.items.map((person) => [person.publicId, person.displayName])),
+              );
+              const entries = await Promise.all(
+                page.items.map(async (item) => {
+                  try {
+                    const detail = await getJson<IdentityObservationDetail>(
+                      `/api/v1/admin/identity-observations/${encodeURIComponent(item.publicId)}`,
+                    );
+                    return [item.publicId, detail] as const;
+                  } catch {
+                    return [item.publicId, null] as const;
+                  }
+                }),
+              );
+              if (requestedClipRef.current !== clipId) return;
+              setIdentityDetails(Object.fromEntries(entries));
+            } catch {
+              if (requestedClipRef.current === clipId) setIdentityError(t('clips.identity.loadError'));
+            } finally {
+              if (requestedClipRef.current === clipId) setIdentityLoading(false);
+            }
+          })();
+        }
         if (details.clip.analysisStatus === 'completed') {
           try {
             setAnalysisResult(
@@ -851,7 +958,6 @@ export function ClipsPanel({
           }
         }
         setLinkNotice(undefined);
-        requestedClipRef.current = clipId;
         if (deepLinkParams?.clip !== clipId) {
           onDeepLinkParamsChange?.({ ...(deepLinkParams ?? {}), clip: clipId });
         }
@@ -865,7 +971,7 @@ export function ClipsPanel({
         setDetailLoading(undefined);
       }
     },
-    [deepLinkParams, onDeepLinkParamsChange, t],
+    [deepLinkParams, isAdmin, onDeepLinkParamsChange, t],
   );
 
   const closeDetail = useCallback(() => {
@@ -873,6 +979,11 @@ export function ClipsPanel({
     setPlaybackError(false);
     setPlaybackAttempt(0);
     setLinkNotice(undefined);
+    setIdentityObservations(undefined);
+    setIdentityDetails({});
+    setIdentityPeople({});
+    setIdentityError('');
+    setIdentityLoading(false);
     requestedClipRef.current = undefined;
     if (deepLinkParams?.clip) {
       const next = { ...(deepLinkParams ?? {}) };
@@ -1943,6 +2054,113 @@ export function ClipsPanel({
                           ? t('clips.analysisResult.unavailable')
                           : t('clips.analysisResult.loading')}
                       </p>
+                    )}
+                  </section>
+                )}
+                {isAdmin && (
+                  <section className="clip-identity-observations" aria-labelledby="clip-identity-title">
+                    <h3 className="h6" id="clip-identity-title">
+                      {t('clips.identity.title')}
+                    </h3>
+                    {identityLoading && !identityObservations && (
+                      <p role="status">{t('people.identity.loading')}</p>
+                    )}
+                    {identityError && (
+                      <p className="error-text" role="alert">
+                        {identityError}
+                      </p>
+                    )}
+                    {!identityLoading && !identityError && identityObservations?.length === 0 && (
+                      <p role="status">{t('clips.identity.empty')}</p>
+                    )}
+                    {identityObservations && identityObservations.length > 0 && (
+                      <ul className="list-unstyled">
+                        {identityObservations.map((item) => {
+                          const detail = identityDetails[item.publicId];
+                          return (
+                            <li key={item.publicId} className="mb-3">
+                              <dl className="clip-metadata">
+                                <dt>{t('people.identity.column.observed')}</dt>
+                                <dd>{formatDate(item.observedAtUtc)}</dd>
+                                <dt>{t('clips.identity.ingestedAt')}</dt>
+                                <dd>{formatDate(item.ingestedAtUtc)}</dd>
+                                <dt>{t('people.identity.column.match')}</dt>
+                                <dd>
+                                  {t(identityMatchKeys[item.matchStatus] ?? 'people.identity.match.unknown')}
+                                </dd>
+                                <dt>{t('people.identity.column.best')}</dt>
+                                <dd>
+                                  {identityPersonName(item.bestPersonPublicId)}
+                                  {item.bestScore !== null && ` · ${item.bestScore.toFixed(3)}`}
+                                </dd>
+                                <dt>{t('clips.identity.margin')}</dt>
+                                <dd>{item.margin === null ? '—' : item.margin.toFixed(3)}</dd>
+                                <dt>{t('clips.identity.policy')}</dt>
+                                <dd>{item.policyVersion}</dd>
+                                <dt>{t('people.identity.column.review')}</dt>
+                                <dd>{t(identityReviewKeys[item.reviewStatus])}</dd>
+                                {item.resolvedPersonPublicId && (
+                                  <>
+                                    <dt>{t('people.identity.review.personLabel')}</dt>
+                                    <dd>{identityPersonName(item.resolvedPersonPublicId)}</dd>
+                                  </>
+                                )}
+                              </dl>
+                              {detail === undefined ? (
+                                <p role="status">{t('people.identity.loading')}</p>
+                              ) : detail === null ? (
+                                <p className="error-text" role="alert">
+                                  {t('clips.identity.detailError')}
+                                </p>
+                              ) : (
+                                <>
+                                  <h4 className="h6">{t('people.identity.candidatesTitle')}</h4>
+                                  {detail.candidates.length === 0 ? (
+                                    <p className="small text-secondary">
+                                      {t('people.identity.candidatesEmpty')}
+                                    </p>
+                                  ) : (
+                                    <ul className="small" aria-label={t('people.identity.candidatesTitle')}>
+                                      {detail.candidates.map((candidate) => (
+                                        <li key={candidate.personPublicId}>
+                                          {identityPersonName(candidate.personPublicId)} ·{' '}
+                                          {candidate.score.toFixed(3)}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                  <h4 className="h6 mt-3">{t('people.identity.review.history')}</h4>
+                                  {detail.reviews.length === 0 ? (
+                                    <p className="small text-secondary">
+                                      {t('people.identity.review.noHistory')}
+                                    </p>
+                                  ) : (
+                                    <ul className="small" aria-label={t('people.identity.review.history')}>
+                                      {detail.reviews.map((review) => (
+                                        <li key={review.publicId}>
+                                          {t(
+                                            identityDecisionKeys[review.decision] ??
+                                              'people.identity.decision.inconclusive',
+                                          )}
+                                          {review.selectedPersonPublicId
+                                            ? ` · ${identityPersonName(review.selectedPersonPublicId)}`
+                                            : ''}
+                                          {' — '}
+                                          {t('people.identity.review.reviewedBy', {
+                                            reviewer: review.reviewerPublicId,
+                                            date: formatDate(review.createdAtUtc),
+                                          })}
+                                          {review.note ? ` · ${review.note}` : ''}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
                     )}
                   </section>
                 )}

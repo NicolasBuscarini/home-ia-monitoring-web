@@ -740,3 +740,84 @@ it('shows the stored analysis result for a completed clip', async () => {
   expect(await screen.findByText('yolox-nano-0.1.1rc0')).toBeInTheDocument();
   expect(await screen.findByText(/person · 87%/)).toBeInTheDocument();
 });
+
+it('shows every identity observation of a clip in its details for an administrator', async () => {
+  const clip = {
+    publicId: 'CLP000000000021',
+    cameraId: 'CAM000000000001',
+    startedAtUtc: '2026-11-07T20:34:27Z',
+    endedAtUtc: '2026-11-07T20:34:41Z',
+    state: 'ready',
+    archiveStatus: 'archived',
+    analysisStatus: 'not_requested',
+    thumbnailUrl: null,
+    sizeBytes: 2048,
+    triggerReason: 'visual_change:91938bb3218346aca64d29d266e72b61',
+    triggerConfigVersion: 'trigger-v1',
+    isPreserved: false,
+    preservationVersion: 0,
+  };
+  const observation = {
+    publicId: 'OBV000000000001',
+    cameraPublicId: 'CAM000000000001',
+    clipPublicId: 'CLP000000000021',
+    observedAtUtc: '2026-11-07T20:34:30Z',
+    ingestedAtUtc: '2026-11-07T20:36:00Z',
+    matchStatus: 'suggested',
+    bestPersonPublicId: 'PER000000000001',
+    bestScore: 0.9838,
+    margin: 0.05,
+    policyVersion: 'identity-match.baseline.v1',
+    candidateCount: 1,
+    reviewStatus: 'reviewed',
+    resolvedPersonPublicId: 'PER000000000001',
+    latestReviewPublicId: 'RVW000000000001',
+  };
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === '/api/v1/clips/CLP000000000021')
+      return json({
+        clip,
+        mediaUrl: null,
+        mediaSha256: null,
+        thumbnailSha256: null,
+        attemptCount: 0,
+        updatedAtUtc: '2026-11-07T20:36:01Z',
+      });
+    if (path === '/api/v1/admin/identity-observations/OBV000000000001')
+      return json({
+        summary: observation,
+        candidates: [{ personPublicId: 'PER000000000001', score: 0.971 }],
+        reviews: [
+          {
+            publicId: 'RVW000000000001',
+            decision: 'confirmed',
+            selectedPersonPublicId: 'PER000000000001',
+            note: 'Confirmado pelo operador',
+            reviewerPublicId: 'USR000000000001',
+            createdAtUtc: '2026-11-07T20:37:00Z',
+          },
+        ],
+      });
+    if (path.startsWith('/api/v1/admin/identity-observations?'))
+      return json({ items: [observation], page: 1, pageSize: 50, total: 1 });
+    if (path.startsWith('/api/v1/admin/known-people?'))
+      return json({ items: [{ publicId: 'PER000000000001', displayName: 'Nicolas' }] });
+    return json({ items: [clip], page: 1, pageSize: 20, total: 1 });
+  });
+
+  render(
+    <I18nProvider>
+      <ClipsPanel isAdmin />
+    </I18nProvider>,
+  );
+
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: /Detalhes e reprodu/ }));
+
+  expect(await screen.findByText('Observações de identidade')).toBeInTheDocument();
+  expect(await screen.findByText('identity-match.baseline.v1')).toBeInTheDocument();
+  expect(await screen.findByText(/Nicolas · 0.971/)).toBeInTheDocument();
+  expect(await screen.findByText(/Confirmar sugestão/)).toBeInTheDocument();
+  expect(await screen.findByText(/Confirmado pelo operador/)).toBeInTheDocument();
+});

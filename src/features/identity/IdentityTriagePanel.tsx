@@ -42,6 +42,17 @@ interface IdentityObservationDetail {
   }>;
 }
 
+interface ClipFrameManifest {
+  clipPublicId: string;
+  durationMilliseconds: number;
+  sampledFrames: number;
+  frames: Array<{
+    index: number;
+    offsetMilliseconds: number;
+    faces?: Array<{ x: number; y: number; width: number; height: number }>;
+  }>;
+}
+
 type Decision = 'confirmed' | 'associated' | 'rejected' | 'inconclusive';
 type ReviewFilter = 'pending' | 'reviewed' | 'notRequired' | '';
 type MatchFilter = 'suggested' | 'ambiguous' | 'unknown' | 'noEnrollment' | '';
@@ -76,6 +87,7 @@ export function IdentityTriagePanel() {
   const decisionId = useId();
   const personId = useId();
   const noteId = useId();
+  const framesTitleId = useId();
   const [observations, setObservations] = useState<IdentityObservationPage>();
   const [people, setPeople] = useState<Array<{ publicId: string; displayName: string }>>([]);
   const [pageNumber, setPageNumber] = useState(1);
@@ -85,6 +97,12 @@ export function IdentityTriagePanel() {
   const [loadError, setLoadError] = useState('');
   const [selectedId, setSelectedId] = useState<string>();
   const [detail, setDetail] = useState<IdentityObservationDetail>();
+  const [frames, setFrames] = useState<{
+    id: string;
+    status: 'loading' | 'ready' | 'error' | 'withoutClip';
+    manifest?: ClipFrameManifest;
+  }>();
+  const [frameErrors, setFrameErrors] = useState<Record<number, boolean>>({});
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
   const [decision, setDecision] = useState<Decision>('inconclusive');
@@ -145,6 +163,17 @@ export function IdentityTriagePanel() {
     [people, t],
   );
 
+  async function loadFrames(observationId: string) {
+    try {
+      const result = await getJson<ClipFrameManifest>(
+        `/api/v1/admin/identity-observations/${observationId}/frames`,
+      );
+      setFrames({ id: observationId, status: 'ready', manifest: result });
+    } catch {
+      setFrames({ id: observationId, status: 'error' });
+    }
+  }
+
   async function openObservation(summary: IdentityObservationSummary) {
     setSelectedId(summary.publicId);
     setDetail(undefined);
@@ -154,6 +183,13 @@ export function IdentityTriagePanel() {
     setDecision(summary.matchStatus === 'suggested' ? 'confirmed' : 'inconclusive');
     setSelectedPerson(summary.bestPersonPublicId ?? '');
     setNote('');
+    setFrameErrors({});
+    if (!summary.clipPublicId) {
+      setFrames({ id: summary.publicId, status: 'withoutClip' });
+    } else {
+      setFrames({ id: summary.publicId, status: 'loading' });
+      void loadFrames(summary.publicId);
+    }
     setDetailLoading(true);
     try {
       const result = await getJson<IdentityObservationDetail>(
@@ -413,6 +449,87 @@ export function IdentityTriagePanel() {
                   margin: detail.summary.margin === null ? '—' : detail.summary.margin.toFixed(3),
                 })}
               </p>
+              {frames?.id === selectedId && (
+                <section className="identity-frames mt-3" aria-labelledby={framesTitleId}>
+                  <h4 id={framesTitleId} className="h6">
+                    {t('people.identity.frames.title')}
+                  </h4>
+                  {frames.status === 'loading' && (
+                    <p className="small" role="status" aria-live="polite">
+                      {t('people.identity.frames.loading')}
+                    </p>
+                  )}
+                  {frames.status === 'withoutClip' && (
+                    <p className="small text-secondary">{t('people.identity.frames.withoutClip')}</p>
+                  )}
+                  {frames.status === 'error' && (
+                    <p className="error-text" role="alert">
+                      {t('people.identity.frames.error')}
+                    </p>
+                  )}
+                  {frames.status === 'ready' && frames.manifest && (
+                    <>
+                      <p className="small text-secondary">{t('people.identity.frames.hint')}</p>
+                      <ul className="list-unstyled d-flex flex-wrap gap-2">
+                        {frames.manifest.frames.slice(0, 6).map((frame) => {
+                          const face = frame.faces?.[0];
+                          return (
+                            <li key={frame.index}>
+                              {frameErrors[frame.index] ? (
+                                <span className="small text-secondary">
+                                  {t('people.identity.frames.unavailable')}
+                                </span>
+                              ) : (
+                                <figure className="m-0">
+                                  <span className="position-relative d-inline-block">
+                                    <img
+                                      src={`/api/v1/admin/identity-observations/${selectedId}/frames/${frame.index}`}
+                                      alt={t('people.identity.frames.alt', {
+                                        index: frame.index + 1,
+                                        seconds: (frame.offsetMilliseconds / 1000).toFixed(1),
+                                      })}
+                                      loading="lazy"
+                                      className="img-thumbnail"
+                                      style={{ width: '12rem', height: 'auto' }}
+                                      onError={() =>
+                                        setFrameErrors((current) => ({ ...current, [frame.index]: true }))
+                                      }
+                                    />
+                                    {face && (
+                                      <>
+                                        <span
+                                          aria-hidden="true"
+                                          className="position-absolute border border-2 border-danger rounded-1"
+                                          style={{
+                                            left: `${face.x * 100}%`,
+                                            top: `${face.y * 100}%`,
+                                            width: `${face.width * 100}%`,
+                                            height: `${face.height * 100}%`,
+                                            pointerEvents: 'none',
+                                          }}
+                                        />
+                                        <span className="visually-hidden">
+                                          {t('people.identity.frames.faceDetected')}
+                                        </span>
+                                      </>
+                                    )}
+                                  </span>
+                                  <figcaption className="small text-secondary">
+                                    {t('people.identity.frames.caption', {
+                                      index: frame.index + 1,
+                                      seconds: (frame.offsetMilliseconds / 1000).toFixed(1),
+                                    })}
+                                  </figcaption>
+                                </figure>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </>
+                  )}
+                </section>
+              )}
               <h4 className="h6">{t('people.identity.candidatesTitle')}</h4>
               {detail.candidates.length === 0 ? (
                 <p className="small text-secondary">{t('people.identity.candidatesEmpty')}</p>
