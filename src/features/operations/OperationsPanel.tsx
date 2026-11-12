@@ -34,20 +34,34 @@ export function captureState(state: string | undefined): HealthItem {
     'spool-unavailable': ['capture.state.spoolUnavailable', 'failed'],
     stopped: ['capture.state.stopped', 'failed'],
     disabled: ['capture.state.disabled', 'pending'],
+    stale: ['capture.state.stale', 'degraded'],
+    unavailable: ['capture.state.unavailable', 'failed'],
+    not_found: ['capture.state.notConfigured', 'failed'],
     unreachable: ['capture.state.unreachable', 'failed'],
   };
   const item = labels[state ?? ''];
   return item ? { key: item[0], state: item[1] } : { key: 'operations.state.unknown', state: 'neutral' };
 }
 
-function safeCaptureError(code: string | null | undefined, t: ReturnType<typeof useI18n>['t']) {
-  const labels: Record<string, Parameters<typeof t>[0]> = {
+export function captureErrorKey(code: string | null | undefined): TranslationKey | null {
+  const labels: Record<string, TranslationKey> = {
     capture_source_unavailable: 'operations.error.sourceUnavailable',
     capture_segment_timeout: 'operations.error.segmentTimeout',
     capture_codec_unsupported: 'operations.error.codecUnsupported',
+    capture_audio_unsupported: 'operations.error.codecUnsupported',
+    capture_segment_size_limit: 'operations.error.segmentSizeLimit',
     spool_unavailable: 'operations.error.spoolUnavailable',
+    local_spool_unavailable: 'operations.error.spoolUnavailable',
+    segment_stale: 'operations.error.segmentStale',
+    no_segments: 'operations.error.noSegments',
+    camera_not_configured: 'operations.error.notConfigured',
   };
-  return code ? t(labels[code] ?? 'operations.error.generic') : '';
+  return code ? (labels[code] ?? null) : null;
+}
+
+function safeCaptureError(code: string | null | undefined, t: ReturnType<typeof useI18n>['t']) {
+  const key = captureErrorKey(code);
+  return key ? t(key) : '';
 }
 
 export function OperationsPanel({ camera, view, playerStatus }: OperationsPanelProps) {
