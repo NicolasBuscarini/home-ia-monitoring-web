@@ -1,5 +1,5 @@
 import { ApiError, getJson, request, type TranslationKey, useI18n } from 'home-ia-shared';
-import { type FormEvent, useCallback, useEffect, useId, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useId, useRef, useState } from 'react';
 
 interface KnownPersonPage {
   items: Array<{ publicId: string; displayName: string }>;
@@ -103,6 +103,7 @@ export function IdentityTriagePanel() {
     manifest?: ClipFrameManifest;
   }>();
   const [frameErrors, setFrameErrors] = useState<Record<number, boolean>>({});
+  const [frameCursor, setFrameCursor] = useState(0);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
   const [decision, setDecision] = useState<Decision>('inconclusive');
@@ -111,6 +112,7 @@ export function IdentityTriagePanel() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<SubmitError>('');
   const [notice, setNotice] = useState('');
+  const reviewRef = useRef<HTMLElement>(null);
 
   const loadObservations = useCallback(
     async (requestedPage: number, signal?: AbortSignal) => {
@@ -165,8 +167,12 @@ export function IdentityTriagePanel() {
 
   async function loadFrames(observationId: string) {
     try {
+      // The frames manifest recomputes inline face detection (up to MONITORING_FACE_TIMEOUT_SECONDS)
+      // before responding, so the default 3s shared client timeout is far too short and aborts the
+      // request before the portal (itself tolerant up to 120s) can return the manifest.
       const result = await getJson<ClipFrameManifest>(
         `/api/v1/admin/identity-observations/${observationId}/frames`,
+        AbortSignal.timeout(120_000),
       );
       setFrames({ id: observationId, status: 'ready', manifest: result });
     } catch {
@@ -184,6 +190,7 @@ export function IdentityTriagePanel() {
     setSelectedPerson(summary.bestPersonPublicId ?? '');
     setNote('');
     setFrameErrors({});
+    setFrameCursor(0);
     if (!summary.clipPublicId) {
       setFrames({ id: summary.publicId, status: 'withoutClip' });
     } else {
@@ -212,6 +219,23 @@ export function IdentityTriagePanel() {
     if (kind === 'review') setReviewFilter(value as ReviewFilter);
     else setMatchFilter(value as MatchFilter);
   }
+
+  function closeReview() {
+    setSelectedId(undefined);
+    setDetail(undefined);
+    setFrames(undefined);
+    setFrameErrors({});
+    setDetailError('');
+    setSubmitError('');
+    setNotice('');
+  }
+
+  useEffect(() => {
+    const node = reviewRef.current;
+    if (selectedId && detail && node && typeof node.scrollIntoView === 'function') {
+      node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [selectedId, detail]);
 
   async function submitReview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -259,6 +283,14 @@ export function IdentityTriagePanel() {
     detail.summary.reviewStatus === 'pending' &&
     !submitting &&
     (decision === 'rejected' || decision === 'inconclusive' || !!selectedPerson);
+
+  const frameList = frames?.status === 'ready' && frames.manifest ? frames.manifest.frames : [];
+  const safeCursor = Math.min(frameCursor, Math.max(0, frameList.length - 1));
+  const currentFrame = frameList[safeCursor];
+
+  function stepFrame(delta: number) {
+    setFrameCursor((current) => Math.max(0, Math.min(frameList.length - 1, current + delta)));
+  }
 
   return (
     <section className="panel-card mt-3" aria-labelledby="identity-triage-title">
@@ -345,7 +377,10 @@ export function IdentityTriagePanel() {
               </thead>
               <tbody>
                 {observations.items.map((item) => (
-                  <tr key={item.publicId}>
+                  <tr
+                    key={item.publicId}
+                    className={item.publicId === selectedId ? 'table-active' : undefined}
+                  >
                     <td className="small text-secondary">{formatDateTime(item.observedAtUtc, locale)}</td>
                     <td className="small text-secondary">
                       {item.cameraPublicId ?? t('people.identity.noCamera')}
@@ -426,10 +461,19 @@ export function IdentityTriagePanel() {
       )}
 
       {selectedId && (
-        <section className="identity-review mt-3" aria-labelledby="identity-review-title">
-          <h3 id="identity-review-title" className="h5">
-            {t('people.identity.review.title', { id: selectedId })}
-          </h3>
+        <section
+          ref={reviewRef}
+          className="identity-review border rounded p-3 mt-3"
+          aria-labelledby="identity-review-title"
+        >
+          <header className="d-flex align-items-start justify-content-between gap-2 mb-3">
+            <h3 id="identity-review-title" className="h5 mb-0">
+              {t('people.identity.review.title', { id: selectedId })}
+            </h3>
+            <button className="btn btn-outline-light btn-sm" type="button" onClick={closeReview}>
+              {t('people.identity.review.close')}
+            </button>
+          </header>
           {detailLoading && (
             <p role="status" aria-live="polite">
               {t('people.identity.review.loading')}
@@ -442,210 +486,271 @@ export function IdentityTriagePanel() {
           )}
           {detail && (
             <>
-              <p className="small text-secondary">
-                {t('people.identity.review.original', {
-                  status: t(matchLabelKeys[detail.summary.matchStatus] ?? 'people.identity.match.unknown'),
-                  policy: detail.summary.policyVersion,
-                  margin: detail.summary.margin === null ? '—' : detail.summary.margin.toFixed(3),
-                })}
-              </p>
-              {frames?.id === selectedId && (
-                <section className="identity-frames mt-3" aria-labelledby={framesTitleId}>
-                  <h4 id={framesTitleId} className="h6">
-                    {t('people.identity.frames.title')}
-                  </h4>
-                  {frames.status === 'loading' && (
-                    <p className="small" role="status" aria-live="polite">
-                      {t('people.identity.frames.loading')}
-                    </p>
-                  )}
-                  {frames.status === 'withoutClip' && (
-                    <p className="small text-secondary">{t('people.identity.frames.withoutClip')}</p>
-                  )}
-                  {frames.status === 'error' && (
-                    <p className="error-text" role="alert">
-                      {t('people.identity.frames.error')}
-                    </p>
-                  )}
-                  {frames.status === 'ready' && frames.manifest && (
-                    <>
-                      <p className="small text-secondary">{t('people.identity.frames.hint')}</p>
-                      <ul className="list-unstyled d-flex flex-wrap gap-2">
-                        {frames.manifest.frames.slice(0, 6).map((frame) => {
-                          const face = frame.faces?.[0];
-                          return (
-                            <li key={frame.index}>
-                              {frameErrors[frame.index] ? (
-                                <span className="small text-secondary">
-                                  {t('people.identity.frames.unavailable')}
-                                </span>
-                              ) : (
-                                <figure className="m-0">
-                                  <span className="position-relative d-inline-block">
-                                    <img
-                                      src={`/api/v1/admin/identity-observations/${selectedId}/frames/${frame.index}`}
-                                      alt={t('people.identity.frames.alt', {
-                                        index: frame.index + 1,
-                                        seconds: (frame.offsetMilliseconds / 1000).toFixed(1),
-                                      })}
-                                      loading="lazy"
-                                      className="img-thumbnail"
-                                      style={{ width: '12rem', height: 'auto' }}
-                                      onError={() =>
-                                        setFrameErrors((current) => ({ ...current, [frame.index]: true }))
-                                      }
-                                    />
-                                    {face && (
-                                      <>
-                                        <span
-                                          aria-hidden="true"
-                                          className="position-absolute border border-2 border-danger rounded-1"
-                                          style={{
-                                            left: `${face.x * 100}%`,
-                                            top: `${face.y * 100}%`,
-                                            width: `${face.width * 100}%`,
-                                            height: `${face.height * 100}%`,
-                                            pointerEvents: 'none',
-                                          }}
-                                        />
-                                        <span className="visually-hidden">
-                                          {t('people.identity.frames.faceDetected')}
-                                        </span>
-                                      </>
-                                    )}
-                                  </span>
-                                  <figcaption className="small text-secondary">
-                                    {t('people.identity.frames.caption', {
-                                      index: frame.index + 1,
-                                      seconds: (frame.offsetMilliseconds / 1000).toFixed(1),
-                                    })}
-                                  </figcaption>
-                                </figure>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </>
-                  )}
-                </section>
-              )}
-              <h4 className="h6">{t('people.identity.candidatesTitle')}</h4>
-              {detail.candidates.length === 0 ? (
-                <p className="small text-secondary">{t('people.identity.candidatesEmpty')}</p>
-              ) : (
-                <ul className="small" aria-label={t('people.identity.candidatesTitle')}>
-                  {detail.candidates.map((candidate) => (
-                    <li key={candidate.personPublicId}>
-                      {personName(candidate.personPublicId)} · {candidate.score.toFixed(3)}
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              <h4 className="h6 mt-3">{t('people.identity.review.history')}</h4>
-              {detail.reviews.length === 0 ? (
-                <p className="small text-secondary">{t('people.identity.review.noHistory')}</p>
-              ) : (
-                <ul className="small" aria-label={t('people.identity.review.history')}>
-                  {detail.reviews.map((review) => (
-                    <li key={review.publicId}>
-                      {t(
-                        decisionLabelKeys[review.decision as Decision] ??
-                          'people.identity.decision.inconclusive',
+              <div className="row g-3 align-items-start">
+                <div className="col-12 col-xl-7">
+                  {frames?.id === selectedId && (
+                    <section className="identity-frames" aria-labelledby={framesTitleId}>
+                      <h4 id={framesTitleId} className="h6">
+                        {t('people.identity.frames.title')}
+                      </h4>
+                      {frames.status === 'loading' && (
+                        <p className="small" role="status" aria-live="polite">
+                          {t('people.identity.frames.loading')}
+                        </p>
                       )}
-                      {review.selectedPersonPublicId ? ` · ${personName(review.selectedPersonPublicId)}` : ''}
-                      {' — '}
-                      {t('people.identity.review.reviewedBy', {
-                        reviewer: review.reviewerPublicId,
-                        date: formatDateTime(review.createdAtUtc, locale),
-                      })}
-                      {review.note ? ` · ${review.note}` : ''}
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {detail.summary.reviewStatus === 'pending' ? (
-                <form className="mt-3" onSubmit={(event) => void submitReview(event)}>
-                  <fieldset>
-                    <legend className="h6">{t('people.identity.review.decisionLabel')}</legend>
-                    <div className="d-flex flex-column gap-1">
-                      {(Object.keys(decisionLabelKeys) as Decision[]).map((value) => (
-                        <div className="form-check" key={value}>
-                          <input
-                            id={`${decisionId}-${value}`}
-                            className="form-check-input"
-                            type="radio"
-                            name={decisionId}
-                            value={value}
-                            checked={decision === value}
-                            onChange={() => {
-                              setDecision(value);
-                              setSubmitError('');
-                            }}
-                          />
-                          <label className="form-check-label" htmlFor={`${decisionId}-${value}`}>
-                            {t(decisionLabelKeys[value])}
-                          </label>
+                      {frames.status === 'withoutClip' && (
+                        <p className="small text-secondary">{t('people.identity.frames.withoutClip')}</p>
+                      )}
+                      {frames.status === 'error' && (
+                        <div className="error-text" role="alert">
+                          <p>{t('people.identity.frames.error')}</p>
                         </div>
+                      )}
+                      {frames.status === 'ready' && frames.manifest && currentFrame && (
+                        <>
+                          <p className="small text-secondary">{t('people.identity.frames.hint')}</p>
+                          <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+                            <button
+                              className="btn btn-outline-light btn-sm"
+                              type="button"
+                              onClick={() => stepFrame(-1)}
+                              disabled={safeCursor === 0}
+                            >
+                              {t('people.identity.frames.previous')}
+                            </button>
+                            <span className="small text-secondary">
+                              {t('people.identity.frames.position', {
+                                current: safeCursor + 1,
+                                total: frameList.length,
+                              })}
+                            </span>
+                            <button
+                              className="btn btn-outline-light btn-sm"
+                              type="button"
+                              onClick={() => stepFrame(1)}
+                              disabled={safeCursor >= frameList.length - 1}
+                            >
+                              {t('people.identity.frames.next')}
+                            </button>
+                          </div>
+                          <figure className="m-0 text-center">
+                            {frameErrors[currentFrame.index] ? (
+                              <span className="small text-secondary d-block my-3">
+                                {t('people.identity.frames.unavailable')}
+                              </span>
+                            ) : (
+                              <span className="position-relative d-inline-block">
+                                <img
+                                  src={`/api/v1/admin/identity-observations/${selectedId}/frames/${currentFrame.index}`}
+                                  alt={t('people.identity.frames.alt', {
+                                    index: currentFrame.index + 1,
+                                    seconds: (currentFrame.offsetMilliseconds / 1000).toFixed(1),
+                                  })}
+                                  className="img-fluid rounded border"
+                                  onError={() =>
+                                    setFrameErrors((current) => ({
+                                      ...current,
+                                      [currentFrame.index]: true,
+                                    }))
+                                  }
+                                />
+                                {currentFrame.faces?.[0] && (
+                                  <>
+                                    <span
+                                      aria-hidden="true"
+                                      className="position-absolute border border-2 border-danger rounded-1"
+                                      style={{
+                                        left: `${currentFrame.faces[0].x * 100}%`,
+                                        top: `${currentFrame.faces[0].y * 100}%`,
+                                        width: `${currentFrame.faces[0].width * 100}%`,
+                                        height: `${currentFrame.faces[0].height * 100}%`,
+                                        pointerEvents: 'none',
+                                      }}
+                                    />
+                                    <span className="visually-hidden">
+                                      {t('people.identity.frames.faceDetected')}
+                                    </span>
+                                  </>
+                                )}
+                              </span>
+                            )}
+                            <figcaption className="small text-secondary mt-1">
+                              {t('people.identity.frames.caption', {
+                                index: currentFrame.index + 1,
+                                seconds: (currentFrame.offsetMilliseconds / 1000).toFixed(1),
+                              })}
+                            </figcaption>
+                          </figure>
+                          <ul className="list-unstyled d-flex flex-wrap gap-2 mt-2 mb-0">
+                            {frameList.map((frame, index) => (
+                              <li key={frame.index}>
+                                <button
+                                  type="button"
+                                  className="btn p-0 border-0"
+                                  aria-label={t('people.identity.frames.select', {
+                                    index: frame.index + 1,
+                                  })}
+                                  aria-current={frame.index === currentFrame.index ? 'true' : undefined}
+                                  onClick={() => setFrameCursor(index)}
+                                >
+                                  <img
+                                    src={`/api/v1/admin/identity-observations/${selectedId}/frames/${frame.index}`}
+                                    alt=""
+                                    loading="lazy"
+                                    className={`img-thumbnail ${frame.index === currentFrame.index ? 'border-primary' : 'opacity-75'}`}
+                                    style={{ width: '4.5rem', height: 'auto' }}
+                                    onError={() =>
+                                      setFrameErrors((current) => ({ ...current, [frame.index]: true }))
+                                    }
+                                  />
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                    </section>
+                  )}
+                </div>
+                <div className="col-12 col-xl-5">
+                  <div className="border rounded p-2 mb-3">
+                    <span className="small text-uppercase text-secondary d-block">
+                      {t('people.identity.review.originalLabel')}
+                    </span>
+                    <p className="small mb-0">
+                      {t('people.identity.review.original', {
+                        status: t(
+                          matchLabelKeys[detail.summary.matchStatus] ?? 'people.identity.match.unknown',
+                        ),
+                        policy: detail.summary.policyVersion,
+                        margin: detail.summary.margin === null ? '—' : detail.summary.margin.toFixed(3),
+                      })}
+                    </p>
+                  </div>
+                  <h4 className="h6">{t('people.identity.candidatesTitle')}</h4>
+                  {detail.candidates.length === 0 ? (
+                    <p className="small text-secondary">{t('people.identity.candidatesEmpty')}</p>
+                  ) : (
+                    <ul className="small" aria-label={t('people.identity.candidatesTitle')}>
+                      {detail.candidates.map((candidate) => (
+                        <li key={candidate.personPublicId}>
+                          {personName(candidate.personPublicId)} · {candidate.score.toFixed(3)}
+                        </li>
                       ))}
-                    </div>
-                  </fieldset>
-
-                  {(decision === 'confirmed' || decision === 'associated') && (
-                    <div className="mt-3">
-                      <label className="form-label" htmlFor={personId}>
-                        {t('people.identity.review.personLabel')}
-                      </label>
-                      <select
-                        id={personId}
-                        className="form-select"
-                        value={selectedPerson}
-                        onChange={(event) => setSelectedPerson(event.currentTarget.value)}
-                      >
-                        <option value="">{t('people.identity.review.personPlaceholder')}</option>
-                        {personOptions.map((person) => (
-                          <option key={person.publicId} value={person.publicId}>
-                            {personName(person.publicId)}
-                            {'score' in person ? ` · ${person.score.toFixed(3)}` : ''}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    </ul>
                   )}
 
-                  <div className="mt-3">
-                    <label className="form-label" htmlFor={noteId}>
-                      {t('people.identity.review.noteLabel')}
-                    </label>
-                    <input
-                      id={noteId}
-                      className="form-control"
-                      type="text"
-                      maxLength={500}
-                      value={note}
-                      onChange={(event) => setNote(event.currentTarget.value)}
-                    />
-                    <p className="small text-secondary mt-1 mb-0">{t('people.identity.review.noteHelp')}</p>
-                  </div>
+                  <h4 className="h6 mt-3">{t('people.identity.review.history')}</h4>
+                  {detail.reviews.length === 0 ? (
+                    <p className="small text-secondary">{t('people.identity.review.noHistory')}</p>
+                  ) : (
+                    <ul className="small" aria-label={t('people.identity.review.history')}>
+                      {detail.reviews.map((review) => (
+                        <li key={review.publicId}>
+                          {t(
+                            decisionLabelKeys[review.decision as Decision] ??
+                              'people.identity.decision.inconclusive',
+                          )}
+                          {review.selectedPersonPublicId
+                            ? ` · ${personName(review.selectedPersonPublicId)}`
+                            : ''}
+                          {' — '}
+                          {t('people.identity.review.reviewedBy', {
+                            reviewer: review.reviewerPublicId,
+                            date: formatDateTime(review.createdAtUtc, locale),
+                          })}
+                          {review.note ? ` · ${review.note}` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
 
-                  {submitError && (
-                    <p className="error-text" role="alert">
-                      {submitError === 'conflict'
-                        ? t('people.identity.review.error.conflict')
-                        : t('people.identity.review.error.submit')}
+                  {detail.summary.reviewStatus === 'pending' ? (
+                    <form className="mt-3 border-top pt-3" onSubmit={(event) => void submitReview(event)}>
+                      <fieldset>
+                        <legend className="h6">{t('people.identity.review.decisionLabel')}</legend>
+                        <div className="d-flex flex-column gap-1">
+                          {(Object.keys(decisionLabelKeys) as Decision[]).map((value) => (
+                            <div className="form-check" key={value}>
+                              <input
+                                id={`${decisionId}-${value}`}
+                                className="form-check-input"
+                                type="radio"
+                                name={decisionId}
+                                value={value}
+                                checked={decision === value}
+                                onChange={() => {
+                                  setDecision(value);
+                                  setSubmitError('');
+                                }}
+                              />
+                              <label className="form-check-label" htmlFor={`${decisionId}-${value}`}>
+                                {t(decisionLabelKeys[value])}
+                              </label>
+                            </div>
+                          ))}
+                        </div>
+                      </fieldset>
+
+                      {(decision === 'confirmed' || decision === 'associated') && (
+                        <div className="mt-3">
+                          <label className="form-label" htmlFor={personId}>
+                            {t('people.identity.review.personLabel')}
+                          </label>
+                          <select
+                            id={personId}
+                            className="form-select"
+                            value={selectedPerson}
+                            onChange={(event) => setSelectedPerson(event.currentTarget.value)}
+                          >
+                            <option value="">{t('people.identity.review.personPlaceholder')}</option>
+                            {personOptions.map((person) => (
+                              <option key={person.publicId} value={person.publicId}>
+                                {personName(person.publicId)}
+                                {'score' in person ? ` · ${person.score.toFixed(3)}` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      <div className="mt-3">
+                        <label className="form-label" htmlFor={noteId}>
+                          {t('people.identity.review.noteLabel')}
+                        </label>
+                        <input
+                          id={noteId}
+                          className="form-control"
+                          type="text"
+                          maxLength={500}
+                          value={note}
+                          onChange={(event) => setNote(event.currentTarget.value)}
+                        />
+                        <p className="small text-secondary mt-1 mb-0">
+                          {t('people.identity.review.noteHelp')}
+                        </p>
+                      </div>
+
+                      {submitError && (
+                        <p className="error-text" role="alert">
+                          {submitError === 'conflict'
+                            ? t('people.identity.review.error.conflict')
+                            : t('people.identity.review.error.submit')}
+                        </p>
+                      )}
+                      <button className="btn btn-primary mt-3" type="submit" disabled={!canSubmit}>
+                        {submitting
+                          ? t('people.identity.review.submitting')
+                          : t('people.identity.review.submit')}
+                      </button>
+                    </form>
+                  ) : (
+                    <p className="small text-secondary" role="status">
+                      {t('people.identity.review.notPending')}
                     </p>
                   )}
-                  <button className="btn btn-primary mt-3" type="submit" disabled={!canSubmit}>
-                    {submitting ? t('people.identity.review.submitting') : t('people.identity.review.submit')}
-                  </button>
-                </form>
-              ) : (
-                <p className="small text-secondary" role="status">
-                  {t('people.identity.review.notPending')}
-                </p>
-              )}
+                </div>
+              </div>
             </>
           )}
         </section>
